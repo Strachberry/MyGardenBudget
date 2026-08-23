@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#EEEAF0" />
+<title>Mon Jardin — Budget</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon-192.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<style>
+  :root{
+    --bg:#EEEAF0; --card:#FBF9FB; --ink:#3B2E42; --ink-soft:#8A7C90; --rule:#E1D9E5;
+    --stem:#5B7B54; --gold:#D9A441; --gold-soft:#F3E9D2; --danger:#B5555A; --danger-soft:#F3E1E1; --ok-soft:#E6EFE2;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; background:var(--bg); overscroll-behavior-y:none; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+  }
+  .display { font-family: Georgia, "Times New Roman", serif; }
+  .wrap { max-width: 448px; margin: 0 auto; padding: 32px 20px 112px; }
+  .row { display:flex; align-items:center; }
+  .between { justify-content:space-between; }
+  .center { justify-content:center; align-items:center; }
+  .card { background:var(--card); border:1px solid var(--rule); border-radius:24px; padding:20px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+  .muted { color: var(--ink-soft); }
+  .eyebrow { color:var(--ink-soft); font-size:10px; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:12px; }
+  .statline { display:flex; justify-content:space-between; align-items:baseline; padding:8px 0; border-bottom:1px solid var(--rule); }
+  .statline:last-of-type { border-bottom:none; }
+  .month-strip { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:24px; justify-content:center; scrollbar-width:none; }
+  .month-strip::-webkit-scrollbar { display:none; }
+  .month-chip { flex-shrink:0; min-width:54px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; border-radius:14px; padding:8px 12px; border:1px solid var(--rule); background:var(--card); }
+  .month-chip.active { background:var(--ok-soft); border-color:var(--stem); }
+  .navbtn { background:none; border:none; font-size:22px; color:var(--ink-soft); padding:8px; cursor:pointer; }
+  .fab { position:fixed; bottom:24px; right:24px; width:56px; height:56px; border-radius:50%; background:var(--stem); color:#fff; font-size:26px; border:none; box-shadow:0 4px 10px rgba(0,0,0,0.2); cursor:pointer; }
+  .sheet-overlay { position:fixed; inset:0; background:rgba(59,46,66,0.35); display:flex; align-items:flex-end; justify-content:center; z-index:20; }
+  .sheet { width:100%; max-width:448px; background:var(--bg); border-top:2px solid var(--stem); border-radius:24px 24px 0 0; padding:20px 20px 32px; max-height:90vh; overflow-y:auto; }
+  .field-label { display:block; font-size:12px; margin-bottom:4px; color:var(--ink-soft); }
+  input, select { font-family: inherit; width:100%; padding:9px 12px; border-radius:14px; border:1px solid var(--rule); background:var(--card); color:var(--ink); font-size:14px; margin-bottom:12px; }
+  .segmented { display:flex; border:1px solid var(--rule); border-radius:999px; overflow:hidden; margin-bottom:12px; }
+  .segmented button { flex:1; border:none; background:transparent; padding:9px 0; font-size:13px; font-weight:500; cursor:pointer; color:var(--ink-soft); font-family:inherit; }
+  .segmented button.active-revenu { background:var(--ok-soft); color:var(--stem); }
+  .segmented button.active-charge { background:var(--danger-soft); color:var(--danger); }
+  .segmented button.active-gold { background:var(--gold-soft); color:var(--gold); }
+  .btn-primary { width:100%; padding:12px 0; border-radius:999px; background:var(--stem); color:#fff; border:none; font-size:14px; font-weight:500; cursor:pointer; }
+  .link-btn { background:none; border:none; color:var(--ink-soft); font-size:10px; letter-spacing:1px; text-transform:uppercase; text-decoration:underline; cursor:pointer; padding:0; font-family:inherit; }
+  .icon-btn { background:none; border:none; cursor:pointer; color:var(--ink-soft); font-size:14px; }
+  .entry-row { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--rule); }
+  .bar-track { background:var(--rule); height:8px; border-radius:999px; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:999px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ---------- storage (100% local, aucune dépendance réseau) ----------
+const storage = {
+  get: (key) => { const v = localStorage.getItem(key); return v !== null ? { key, value: v } : null; },
+  set: (key, value) => { localStorage.setItem(key, value); return { key, value }; },
+};
+
+const REVENU_CATS = ["Salaire", "Primes", "Aides", "Autres revenus"];
+const CHARGE_CATS = ["Logement", "Alimentation", "Transport", "Enfants", "Loisirs", "Santé", "Autres charges"];
+const CAT_HUE = { Logement: 340, Alimentation: 20, Transport: 45, Enfants: 265, Loisirs: 190, Santé: 150, "Autres charges": 300 };
+const MOIS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
+const MOIS_ABR = ["Jan","Fév","Mar","Avr","Mai","Juin","Juil","Août","Sep","Oct","Nov","Déc"];
+
+function fmtEUR(n) { return n.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }); }
+function monthKey(dateStr) { return dateStr.slice(0, 7); }
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
+function daysInMonth(y, m) { return new Date(y, m, 0).getDate(); }
+function addMonths(cursor, delta) {
+  const [y, m] = cursor.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthLabelOf(cursor) {
+  const [y, m] = cursor.split("-").map(Number);
+  return { full: `${MOIS_FR[m - 1]} ${y}`, abr: MOIS_ABR[m - 1], y, m };
+}
+function clamp01(x) { return Math.max(0, Math.min(1, x)); }
+function healthFactor(pct) { return clamp01((pct + 10) / 40); }
+function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+function computeMonth(cursor, oneOff, recurring) {
+  const [y, m] = cursor.split("-").map(Number);
+  const dim = daysInMonth(y, m);
+  const recInstances = recurring
+    .filter((r) => cursor >= r.startMonth && (!r.endMonth || cursor <= r.endMonth))
+    .map((r) => ({ id: `${r.id}-${cursor}`, type: r.type, label: r.label, category: r.category, amount: r.amount,
+      date: `${cursor}-${String(Math.min(r.day, dim)).padStart(2, "0")}`, recurring: true, templateId: r.id }));
+  const oneOffMonth = oneOff.filter((e) => monthKey(e.date) === cursor);
+  const all = [...oneOffMonth, ...recInstances];
+  const revenus = all.filter((e) => e.type === "revenu").reduce((s, e) => s + e.amount, 0);
+  const charges = all.filter((e) => e.type === "charge").reduce((s, e) => s + e.amount, 0);
+  const epargne = revenus - charges;
+  const tauxEpargne = revenus > 0 ? (epargne / revenus) * 100 : charges > 0 ? -100 : 0;
+  const tauxCharges = revenus > 0 ? (charges / revenus) * 100 : 0;
+  return { all, revenus, charges, epargne, tauxEpargne, tauxCharges };
+}
+
+// ---------- SVG builders ----------
+function petalSVG(angle, hue, health, cx, cy) {
+  const sat = 8 + health * 80, light = 80 - health * 18, scale = 0.55 + health * 0.45;
+  const color = `hsl(${hue} ${sat}% ${light}%)`;
+  return `<g transform="rotate(${angle} ${cx} ${cy}) translate(${cx} ${cy}) scale(${scale}) translate(${-cx} ${-cy})">
+    <path d="M${cx},${cy - 20} C${cx - 11},${cy - 45} ${cx - 9},${cy - 78} ${cx},${cy - 95} C${cx + 9},${cy - 78} ${cx + 11},${cy - 45} ${cx},${cy - 20} Z" fill="${color}" opacity="0.94" />
+  </g>`;
+}
+function heroFlowerSVG(pct) {
+  const health = healthFactor(pct);
+  const cx = 110, cy = 118;
+  let petals = "";
+  for (let i = 0; i < 10; i++) petals += petalSVG(i * 36, i * 36, health, cx, cy);
+  const stemColor = `hsl(100 ${10 + health * 45}% ${42 - health * 8}%)`;
+  const centerColor = `hsl(42 ${20 + health * 60}% ${68 - health * 12}%)`;
+  const tone = pct < 0 ? "var(--danger)" : pct < 15 ? "var(--gold)" : "var(--stem)";
+  return `<svg width="220" height="230" viewBox="0 0 220 230">
+    <path d="M${cx},${cy + 60} C${cx},${cy + 30} ${cx},${cy + 10} ${cx},${cy}" stroke="${stemColor}" stroke-width="4" fill="none" stroke-linecap="round" />
+    <path d="M${cx},${cy + 40} C${cx - 20},${cy + 34} ${cx - 26},${cy + 22} ${cx - 18},${cy + 14} C${cx - 8},${cy + 22} ${cx - 4},${cy + 32} ${cx},${cy + 40}" fill="${stemColor}" opacity="0.85" />
+    <path d="M${cx},${cy + 48} C${cx + 20},${cy + 42} ${cx + 26},${cy + 30} ${cx + 18},${cy + 22} C${cx + 8},${cy + 30} ${cx + 4},${cy + 40} ${cx},${cy + 48}" fill="${stemColor}" opacity="0.85" />
+    ${petals}
+    <circle cx="${cx}" cy="${cy}" r="${16 + health * 4}" fill="${centerColor}" />
+    <text x="${cx}" y="${cy + 8}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--ink)">${pct >= 0 ? "+" : ""}${pct.toFixed(0)}%</text>
+    <text x="${cx}" y="230" text-anchor="middle" font-size="10" letter-spacing="1" fill="${tone}">TAUX D'ÉPARGNE</text>
+  </svg>`;
+}
+function miniFlowerSVG(hue, health, size) {
+  const sat = 15 + health * 70, light = 78 - health * 15;
+  const color = `hsl(${hue} ${sat}% ${light}%)`;
+  const c = size;
+  let petals = "";
+  [0, 72, 144, 216, 288].forEach((a) => {
+    petals += `<g transform="rotate(${a} ${c} ${c})"><ellipse cx="${c}" cy="${c - size * 0.55}" rx="${size * 0.32}" ry="${size * 0.45}" fill="${color}" opacity="0.95" /></g>`;
+  });
+  return `<svg width="${size * 2}" height="${size * 2}" viewBox="0 0 ${c * 2} ${c * 2}" style="flex-shrink:0">${petals}<circle cx="${c}" cy="${c}" r="${size * 0.28}" fill="var(--gold)" /></svg>`;
+}
+function budSVG(pct, hasData) {
+  const health = healthFactor(pct);
+  const color = hasData ? `hsl(330 ${20 + health * 60}% ${72 - health * 14}%)` : "var(--rule)";
+  const r = hasData ? 5 + health * 2 : 3;
+  return `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="${r}" fill="${color}" /></svg>`;
+}
+
+// ---------- state ----------
+let state = {
+  oneOff: [], recurring: [], loading: true, error: null,
+  cursor: todayISO().slice(0, 7),
+  formOpen: false, recurringPanelOpen: false,
+  formType: "charge", freq: "ponctuelle",
+  saving: false,
+  draft: { label: "", amount: "", date: todayISO(), day: "1" },
+};
+
+function loadData() {
+  try {
+    const res = storage.get("finance-data");
+    if (res && res.value) {
+      const parsed = JSON.parse(res.value);
+      state.oneOff = parsed.entries || [];
+      state.recurring = parsed.recurring || [];
+    }
+  } catch (e) {}
+  state.loading = false;
+}
+function persist() {
+  state.saving = true;
+  try { storage.set("finance-data", JSON.stringify({ entries: state.oneOff, recurring: state.recurring })); }
+  catch (e) { state.error = "Impossible d'enregistrer sur cet appareil."; }
+  state.saving = false;
+}
+
+// ---------- render ----------
+function headerHTML() {
+  return `
+  <div class="row between" style="margin-bottom:4px">
+    <h1 class="display" style="font-size:24px; font-weight:600; margin:0">Mon Jardin</h1>
+    <button class="icon-btn" data-action="open-recurring" style="font-size:10px; letter-spacing:1px; text-transform:uppercase">⚙ Récurrentes</button>
+  </div>
+  <div class="row between" style="margin-bottom:20px">
+    <p class="muted" style="font-size:12px; font-style:italic; margin:0">${state.saving ? "on arrose…" : "budget &amp; épargne, à ton rythme"}</p>
+    <div class="row" style="gap:12px">
+      <button class="link-btn" data-action="export-data">Exporter</button>
+      <button class="link-btn" data-action="trigger-import">Importer</button>
+    </div>
+  </div>`;
+}
+
+function monthNavHTML() {
+  const { full } = monthLabelOf(state.cursor);
+  return `
+  <div class="row between" style="margin-bottom:12px">
+    <button class="navbtn" data-action="prev-month">‹</button>
+    <span style="font-size:14px; font-weight:500">${full}</span>
+    <button class="navbtn" data-action="next-month">›</button>
+  </div>`;
+}
+
+function monthStripHTML() {
+  let chips = "";
+  for (let i = -3; i <= 2; i++) {
+    const c = addMonths(state.cursor, i);
+    const d = computeMonth(c, state.oneOff, state.recurring);
+    const lbl = monthLabelOf(c);
+    const active = c === state.cursor;
+    chips += `<button class="month-chip ${active ? "active" : ""}" data-action="goto-month" data-cursor="${c}">
+      <span class="muted" style="font-size:10px; text-transform:uppercase">${lbl.abr}</span>
+      ${budSVG(d.tauxEpargne, d.all.length > 0)}
+    </button>`;
+  }
+  return `<div class="month-strip">${chips}</div>`;
+}
+
+function heroCardHTML(monthData) {
+  return `
+  <div class="card" style="display:flex; flex-direction:column; align-items:center; margin-bottom:20px">
+    ${heroFlowerSVG(monthData.tauxEpargne)}
+    <div style="width:100%; margin-top:8px">
+      <div class="statline"><span class="muted" style="font-size:14px">Revenus</span><span style="color:var(--stem); font-weight:600">${fmtEUR(monthData.revenus)}</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">Charges</span><span style="color:var(--danger); font-weight:600">${fmtEUR(monthData.charges)}</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">Charges / Revenus</span><span class="muted" style="font-weight:600">${monthData.tauxCharges.toFixed(0)}%</span></div>
+      <div class="row between" style="padding-top:8px">
+        <span class="muted" style="font-size:14px">Épargne du mois</span>
+        <span style="font-size:18px; font-weight:700; color:${monthData.epargne < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(monthData.epargne)}</span>
+      </div>
+    </div>
+    ${monthData.tauxEpargne < 0 ? `<p style="font-size:12px; margin-top:12px; text-align:center; color:var(--danger)">Les fleurs sont fanées ce mois-ci — les charges dépassent les revenus.</p>` : ""}
+  </div>`;
+}
+
+function categoryCardHTML(monthData) {
+  const map = {};
+  monthData.all.filter((e) => e.type === "charge").forEach((e) => { map[e.category] = (map[e.category] || 0) + e.amount; });
+  const byCategory = Object.entries(map).sort((a, b) => b[1] - a[1]);
+  if (byCategory.length === 0) return "";
+  const maxCat = byCategory[0][1];
+  const health = healthFactor(monthData.tauxEpargne);
+  let rows = "";
+  byCategory.forEach(([cat, amt]) => {
+    const hue = CAT_HUE[cat] || 0;
+    rows += `
+    <div class="row" style="gap:12px; margin-bottom:12px">
+      ${miniFlowerSVG(hue, health, 16)}
+      <div style="flex:1; min-width:0">
+        <div class="row between" style="font-size:12px; margin-bottom:4px"><span>${esc(cat)}</span><span>${fmtEUR(amt)}</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${(amt / maxCat) * 100}%; background:hsl(${hue} ${20 + health * 60}% ${65 - health * 15}%)"></div></div>
+      </div>
+    </div>`;
+  });
+  return `<div class="card" style="margin-bottom:20px"><div class="eyebrow">Parterre des charges</div>${rows}</div>`;
+}
+
+function entriesCardHTML(monthData) {
+  const entries = [...monthData.all].sort((a, b) => (a.date < b.date ? 1 : -1));
+  let body;
+  if (entries.length === 0) {
+    body = `<p class="muted" style="font-size:14px; padding:24px 0; text-align:center; font-style:italic">Aucune écriture ce mois-ci. Ajoute un revenu ou une charge.</p>`;
+  } else {
+    body = entries.map((e) => `
+      <div class="entry-row">
+        <div style="min-width:0; padding-right:8px">
+          <div class="row" style="gap:6px">
+            <span style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${esc(e.label)}</span>
+            ${e.recurring ? `<span style="color:var(--gold); font-size:12px">⟳</span>` : ""}
+          </div>
+          <div class="muted" style="font-size:10px">${esc(e.category)} · ${e.date.slice(8, 10)}/${e.date.slice(5, 7)}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; color:${e.type === "revenu" ? "var(--stem)" : "var(--danger)"}">${e.type === "revenu" ? "+" : "−"}${fmtEUR(e.amount)}</span>
+          ${!e.recurring ? `<button class="icon-btn" data-action="remove-oneoff" data-id="${e.id}">🗑</button>` : ""}
+        </div>
+      </div>`).join("");
+  }
+  return `<div class="card">
+    <div class="eyebrow">Écritures</div>
+    ${body}
+  </div>
+  ${state.error ? `<p style="text-align:center; font-size:12px; margin-top:16px; color:var(--danger)">${esc(state.error)}</p>` : ""}`;
+}
+
+function formSheetHTML() {
+  if (!state.formOpen) return "";
+  const { full } = monthLabelOf(state.cursor);
+  const cats = state.formType === "revenu" ? REVENU_CATS : CHARGE_CATS;
+  return `
+  <div class="sheet-overlay" data-action="close-form">
+    <div class="sheet" onclick="event.stopPropagation()">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Nouvelle écriture</h2>
+        <button class="icon-btn" data-action="close-form" style="font-size:20px">✕</button>
+      </div>
+      <div class="segmented">
+        <button class="${state.formType === "revenu" ? "active-revenu" : ""}" data-action="set-type" data-type="revenu">Revenu</button>
+        <button class="${state.formType === "charge" ? "active-charge" : ""}" data-action="set-type" data-type="charge">Charge</button>
+      </div>
+      <div class="segmented">
+        <button class="${state.freq === "ponctuelle" ? "active-gold" : ""}" data-action="set-freq" data-freq="ponctuelle">Ponctuelle</button>
+        <button class="${state.freq === "recurrente" ? "active-gold" : ""}" data-action="set-freq" data-freq="recurrente">Mensuelle</button>
+      </div>
+      <label class="field-label">Libellé</label>
+      <input id="f-label" placeholder="${state.formType === "revenu" ? "Salaire" : "Loyer"}" />
+      <label class="field-label">Catégorie</label>
+      <select id="f-cat">${cats.map((c) => `<option value="${c}">${c}</option>`).join("")}</select>
+      <div class="row" style="gap:12px">
+        <div style="flex:1">
+          <label class="field-label">Montant (€)</label>
+          <input id="f-amount" inputmode="decimal" placeholder="0" />
+        </div>
+        <div style="flex:1">
+          ${state.freq === "ponctuelle"
+            ? `<label class="field-label">Date</label><input id="f-date" type="date" />`
+            : `<label class="field-label">Échéance (jour)</label><input id="f-day" inputmode="numeric" placeholder="1-31" />`}
+        </div>
+      </div>
+      ${state.freq === "recurrente" ? `<p class="muted" style="font-size:12px; margin:-4px 0 16px; font-style:italic">Cette écriture sera ajoutée automatiquement chaque mois à partir de ${full}.</p>` : ""}
+      <button class="btn-primary" data-action="add-entry">Ajouter</button>
+    </div>
+  </div>`;
+}
+
+function recurringSheetHTML() {
+  if (!state.recurringPanelOpen) return "";
+  let body;
+  if (state.recurring.length === 0) {
+    body = `<p class="muted" style="font-size:14px; padding:16px 0; text-align:center; font-style:italic">Aucune charge ou revenu mensuel pour l'instant. Ajoute-en un via le bouton "+" en choisissant "Mensuelle".</p>`;
+  } else {
+    body = state.recurring.map((r) => `
+      <div class="entry-row">
+        <div style="min-width:0; padding-right:8px">
+          <div style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${esc(r.label)}</div>
+          <div class="muted" style="font-size:10px">${esc(r.category)} · échéance le ${r.day} · depuis ${monthLabelOf(r.startMonth).full}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; color:${r.type === "revenu" ? "var(--stem)" : "var(--danger)"}">${r.type === "revenu" ? "+" : "−"}${fmtEUR(r.amount)}</span>
+          <button class="icon-btn" data-action="remove-recurring" data-id="${r.id}">🗑</button>
+        </div>
+      </div>`).join("");
+  }
+  return `
+  <div class="sheet-overlay" data-action="close-recurring">
+    <div class="sheet" onclick="event.stopPropagation()">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Écritures récurrentes</h2>
+        <button class="icon-btn" data-action="close-recurring" style="font-size:20px">✕</button>
+      </div>
+      ${body}
+    </div>
+  </div>`;
+}
+
+function render() {
+  const root = document.getElementById("root");
+  if (state.loading) {
+    root.innerHTML = `<div class="wrap"><div class="muted" style="text-align:center; padding:80px 0">Le jardin s'ouvre…</div></div>`;
+    return;
+  }
+  const monthData = computeMonth(state.cursor, state.oneOff, state.recurring);
+  root.innerHTML = `
+    <div class="wrap">
+      ${headerHTML()}
+      ${monthNavHTML()}
+      ${monthStripHTML()}
+      ${heroCardHTML(monthData)}
+      ${categoryCardHTML(monthData)}
+      ${entriesCardHTML(monthData)}
+    </div>
+    <button class="fab" data-action="open-form">+</button>
+    ${formSheetHTML()}
+    ${recurringSheetHTML()}
+    <input id="import-file" type="file" accept="application/json" style="display:none" />
+  `;
+  // restore draft values into the (freshly rebuilt) form inputs
+  if (state.formOpen) {
+    const l = document.getElementById("f-label"); if (l) l.value = state.draft.label;
+    const a = document.getElementById("f-amount"); if (a) a.value = state.draft.amount;
+    const d = document.getElementById("f-date"); if (d) d.value = state.draft.date;
+    const day = document.getElementById("f-day"); if (day) day.value = state.draft.day;
+    const cat = document.getElementById("f-cat"); if (cat) cat.value = state.draft.category || cat.value;
+  }
+}
+
+function captureDraft() {
+  if (!state.formOpen) return;
+  const l = document.getElementById("f-label"); if (l) state.draft.label = l.value;
+  const a = document.getElementById("f-amount"); if (a) state.draft.amount = a.value;
+  const d = document.getElementById("f-date"); if (d) state.draft.date = d.value;
+  const day = document.getElementById("f-day"); if (day) state.draft.day = day.value;
+  const cat = document.getElementById("f-cat"); if (cat) state.draft.category = cat.value;
+}
+
+function update() { captureDraft(); render(); }
+
+// ---------- actions ----------
+function exportData() {
+  const payload = { exportedAt: new Date().toISOString(), entries: state.oneOff, recurring: state.recurring };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `mon-jardin-budget-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function handleImportFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      const importedEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
+      const importedRecurring = Array.isArray(parsed.recurring) ? parsed.recurring : [];
+      const existingIds = new Set(state.oneOff.map((x) => x.id));
+      const existingRecIds = new Set(state.recurring.map((x) => x.id));
+      state.oneOff = [...state.oneOff, ...importedEntries.filter((x) => x && x.id && !existingIds.has(x.id))];
+      state.recurring = [...state.recurring, ...importedRecurring.filter((x) => x && x.id && !existingRecIds.has(x.id))];
+      persist();
+      state.error = null;
+    } catch (err) {
+      state.error = "Ce fichier ne semble pas être une sauvegarde valide de Mon Jardin.";
+    }
+    update();
+  };
+  reader.readAsText(file);
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  const action = btn.getAttribute("data-action");
+  switch (action) {
+    case "prev-month": state.cursor = addMonths(state.cursor, -1); update(); break;
+    case "next-month": state.cursor = addMonths(state.cursor, 1); update(); break;
+    case "goto-month": state.cursor = btn.getAttribute("data-cursor"); update(); break;
+    case "open-form":
+      state.formOpen = true;
+      state.draft = { label: "", amount: "", date: todayISO(), day: "1", category: state.formType === "revenu" ? REVENU_CATS[0] : CHARGE_CATS[0] };
+      update();
+      break;
+    case "close-form": state.formOpen = false; update(); break;
+    case "open-recurring": state.recurringPanelOpen = true; update(); break;
+    case "close-recurring": state.recurringPanelOpen = false; update(); break;
+    case "set-type": {
+      captureDraft();
+      state.formType = btn.getAttribute("data-type");
+      state.draft.category = state.formType === "revenu" ? REVENU_CATS[0] : CHARGE_CATS[0];
+      render();
+      break;
+    }
+    case "set-freq": {
+      captureDraft();
+      state.freq = btn.getAttribute("data-freq");
+      render();
+      break;
+    }
+    case "add-entry": {
+      captureDraft();
+      const amt = parseFloat(String(state.draft.amount).replace(",", "."));
+      if (!state.draft.label || !state.draft.label.trim() || !amt || amt <= 0) return;
+      if (state.freq === "ponctuelle") {
+        state.oneOff.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, date: state.draft.date || todayISO() });
+      } else {
+        state.recurring.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, day: Math.max(1, Math.min(31, parseInt(state.draft.day, 10) || 1)), startMonth: state.cursor, endMonth: null });
+      }
+      persist();
+      state.formOpen = false;
+      update();
+      break;
+    }
+    case "remove-oneoff": {
+      const id = btn.getAttribute("data-id");
+      state.oneOff = state.oneOff.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "remove-recurring": {
+      const id = btn.getAttribute("data-id");
+      state.recurring = state.recurring.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "export-data": exportData(); break;
+    case "trigger-import": {
+      const input = document.getElementById("import-file");
+      if (input) input.click();
+      break;
+    }
+    case "close-overlay": break;
+  }
+  if (action === "close-form" || action === "close-recurring") return;
+  if (btn.classList.contains("sheet-overlay")) update();
+});
+
+// close sheet when tapping the dark overlay itself
+document.addEventListener("click", (e) => {
+  if (e.target.classList && e.target.classList.contains("sheet-overlay")) {
+    const action = e.target.getAttribute("data-action");
+    if (action === "close-form") state.formOpen = false;
+    if (action === "close-recurring") state.recurringPanelOpen = false;
+    update();
+  }
+});
+
+document.addEventListener("change", (e) => {
+  if (e.target && e.target.id === "import-file") {
+    const file = e.target.files && e.target.files[0];
+    if (file) handleImportFile(file);
+    e.target.value = "";
+  }
+});
+
+loadData();
+render();
+</script>
+
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
