@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#EEEAF0" />
+<title>Mon Jardin — Budget</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon-192.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<style>
+  :root{
+    --bg:#EEEAF0; --card:#FBF9FB; --ink:#3B2E42; --ink-soft:#8A7C90; --rule:#E1D9E5;
+    --stem:#5B7B54; --gold:#D9A441; --gold-soft:#F3E9D2; --danger:#B5555A; --danger-soft:#F3E1E1; --ok-soft:#E6EFE2;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; background:var(--bg); overscroll-behavior-y:none; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+  }
+  .display { font-family: Georgia, "Times New Roman", serif; }
+  .wrap { max-width: 448px; margin: 0 auto; padding: 32px 20px 112px; }
+  .row { display:flex; align-items:center; }
+  .between { justify-content:space-between; }
+  .center { justify-content:center; align-items:center; }
+  .card { background:var(--card); border:1px solid var(--rule); border-radius:24px; padding:20px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+  .muted { color: var(--ink-soft); }
+  .eyebrow { color:var(--ink-soft); font-size:10px; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:12px; }
+  .statline { display:flex; justify-content:space-between; align-items:baseline; padding:8px 0; border-bottom:1px solid var(--rule); }
+  .statline:last-of-type { border-bottom:none; }
+  .month-strip { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:24px; justify-content:center; scrollbar-width:none; }
+  .month-strip::-webkit-scrollbar { display:none; }
+  .month-chip { flex-shrink:0; min-width:54px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; border-radius:14px; padding:8px 12px; border:1px solid var(--rule); background:var(--card); }
+  .month-chip.active { background:var(--ok-soft); border-color:var(--stem); }
+  .navbtn { background:none; border:none; font-size:22px; color:var(--ink-soft); padding:8px; cursor:pointer; }
+  .fab { position:fixed; bottom:24px; right:24px; width:56px; height:56px; border-radius:50%; background:var(--stem); color:#fff; font-size:26px; border:none; box-shadow:0 4px 10px rgba(0,0,0,0.2); cursor:pointer; }
+  .sheet-overlay { position:fixed; inset:0; background:rgba(59,46,66,0.35); display:flex; align-items:flex-end; justify-content:center; z-index:20; }
+  .sheet { width:100%; max-width:448px; background:var(--bg); border-top:2px solid var(--stem); border-radius:24px 24px 0 0; padding:20px 20px 32px; max-height:90vh; overflow-y:auto; }
+  .field-label { display:block; font-size:12px; margin-bottom:4px; color:var(--ink-soft); }
+  input, select { font-family: inherit; width:100%; padding:9px 12px; border-radius:14px; border:1px solid var(--rule); background:var(--card); color:var(--ink); font-size:14px; margin-bottom:12px; }
+  .segmented { display:flex; border:1px solid var(--rule); border-radius:999px; overflow:hidden; margin-bottom:12px; }
+  .segmented button { flex:1; border:none; background:transparent; padding:9px 0; font-size:13px; font-weight:500; cursor:pointer; color:var(--ink-soft); font-family:inherit; }
+  .segmented button.active-revenu { background:var(--ok-soft); color:var(--stem); }
+  .segmented button.active-charge { background:var(--danger-soft); color:var(--danger); }
+  .segmented button.active-gold { background:var(--gold-soft); color:var(--gold); }
+  .btn-primary { width:100%; padding:12px 0; border-radius:999px; background:var(--stem); color:#fff; border:none; font-size:14px; font-weight:500; cursor:pointer; }
+  .link-btn { background:none; border:none; color:var(--ink-soft); font-size:10px; letter-spacing:1px; text-transform:uppercase; text-decoration:underline; cursor:pointer; padding:0; font-family:inherit; }
+  .icon-btn { background:none; border:none; cursor:pointer; color:var(--ink-soft); font-size:14px; }
+  .entry-row { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--rule); }
+  .bar-track { background:var(--rule); height:8px; border-radius:999px; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:999px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ---------- storage (100% local, aucune dépendance réseau) ----------
+const storage = {
+  get: (key) => { const v = localStorage.getItem(key); return v !== null ? { key, value: v } : null; },
+  set: (key, value) => { localStorage.setItem(key, value); return { key, value }; },
+};
+
+const REVENU_CATS = ["Salaire", "Primes", "Aides", "Autres revenus"];
+const CHARGE_CATS = ["Logement", "Alimentation", "Transport", "Enfants", "Loisirs", "Santé", "Autres charges"];
+const CAT_HUE = { Logement: 340, Alimentation: 20, Transport: 45, Enfants: 265, Loisirs: 190, Santé: 150, "Autres charges": 300 };
+const MOIS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
+const MOIS_ABR = ["Jan","Fév","Mar","Avr","Mai","Juin","Juil","Août","Sep","Oct","Nov","Déc"];
+
+function fmtEUR(n) { return n.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }); }
+function monthKey(dateStr) { return dateStr.slice(0, 7); }
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
+function daysInMonth(y, m) { return new Date(y, m, 0).getDate(); }
+function addMonths(cursor, delta) {
+  const [y, m] = cursor.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthLabelOf(cursor) {
+  const [y, m] = cursor.split("-").map(Number);
+  return { full: `${MOIS_FR[m - 1]} ${y}`, abr: MOIS_ABR[m - 1], y, m };
+}
+function clamp01(x) { return Math.max(0, Math.min(1, x)); }
+// santé de 0 (fané) à 1 (pleine floraison) — objectif : charges <= 50% des revenus
+function healthFactor(tauxCharges, hasRevenu) {
+  if (!hasRevenu) return 0.12;
+  if (tauxCharges <= 50) return 1;
+  return clamp01((100 - tauxCharges) / 50);
+}
+function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+function computeMonth(cursor, oneOff, recurring) {
+  const [y, m] = cursor.split("-").map(Number);
+  const dim = daysInMonth(y, m);
+  const recInstances = recurring
+    .filter((r) => cursor >= r.startMonth && (!r.endMonth || cursor <= r.endMonth))
+    .map((r) => ({ id: `${r.id}-${cursor}`, type: r.type, label: r.label, category: r.category, amount: r.amount,
+      date: `${cursor}-${String(Math.min(r.day, dim)).padStart(2, "0")}`, recurring: true, templateId: r.id }));
+  const oneOffMonth = oneOff.filter((e) => monthKey(e.date) === cursor);
+  const all = [...oneOffMonth, ...recInstances];
+  const revenus = all.filter((e) => e.type === "revenu").reduce((s, e) => s + e.amount, 0);
+  const charges = all.filter((e) => e.type === "charge").reduce((s, e) => s + e.amount, 0);
+  const epargne = revenus - charges;
+  const tauxEpargne = revenus > 0 ? (epargne / revenus) * 100 : charges > 0 ? -100 : 0;
+  const tauxCharges = revenus > 0 ? (charges / revenus) * 100 : 0;
+  return { all, revenus, charges, epargne, tauxEpargne, tauxCharges };
+}
+
+// budget restant du mois précédent : saisi directement par l'utilisateur, mois par mois
+function getReportManuel(cursor) {
+  return state.reportManuel[cursor] || 0;
+}
+
+// ---------- SVG builders ----------
+function orchidPetalSVG(angle, cx, cy, health, wide, hue) {
+  const sat = 12 + health * 72, light = 84 - health * 24, scale = 0.5 + health * 0.5;
+  const color = `hsl(${hue} ${sat}% ${light}%)`;
+  const w = wide ? 25 : 16;
+  return `<g transform="rotate(${angle} ${cx} ${cy}) translate(${cx} ${cy}) scale(${scale}) translate(${-cx} ${-cy})">
+    <path d="M${cx},${cy - 12} C${cx - w},${cy - 36} ${cx - w * 0.75},${cy - 66} ${cx},${cy - 80} C${cx + w * 0.75},${cy - 66} ${cx + w},${cy - 36} ${cx},${cy - 12} Z" fill="${color}" opacity="0.95" />
+  </g>`;
+}
+function orchidLipSVG(cx, cy, health) {
+  const scale = 0.55 + health * 0.45;
+  const lip = `hsl(322 ${25 + health * 65}% ${62 - health * 20}%)`;
+  const throat = `hsl(45 ${35 + health * 50}% ${68 - health * 10}%)`;
+  const dot = `hsl(322 55% 32%)`;
+  const dotOp = 0.25 + health * 0.55;
+  return `<g transform="translate(${cx} ${cy + 6}) scale(${scale})">
+    <path d="M0,0 C-25,9 -30,32 -15,44 C-6,52 6,52 15,44 C30,32 25,9 0,0 Z" fill="${lip}" opacity="0.97" />
+    <ellipse cx="0" cy="20" rx="9" ry="13" fill="${throat}" opacity="0.92" />
+    <circle cx="-5" cy="14" r="1.6" fill="${dot}" opacity="${dotOp}" />
+    <circle cx="4" cy="17" r="1.4" fill="${dot}" opacity="${dotOp}" />
+    <circle cx="0" cy="25" r="1.3" fill="${dot}" opacity="${dotOp}" />
+  </g>`;
+}
+function heroFlowerSVG(monthData) {
+  const health = healthFactor(monthData.tauxCharges, monthData.revenus > 0);
+  const cx = 110, cy = 112;
+  const tone = health < 0.4 ? "var(--danger)" : health < 0.7 ? "var(--gold)" : "var(--stem)";
+
+  // couleur/robustesse de la tige et des feuilles : progresse avec la santé, dès la graine
+  const stemColor = `hsl(100 ${8 + health * 47}% ${38 - health * 6}%)`;
+  const leaves = `
+    <path d="M${cx},${cy + 46} C${cx - 20},${cy + 40} ${cx - 26},${cy + 28} ${cx - 18},${cy + 20} C${cx - 8},${cy + 28} ${cx - 4},${cy + 38} ${cx},${cy + 46}" fill="${stemColor}" opacity="0.85" />
+    <path d="M${cx},${cy + 54} C${cx + 20},${cy + 48} ${cx + 26},${cy + 36} ${cx + 18},${cy + 28} C${cx + 8},${cy + 36} ${cx + 4},${cy + 46} ${cx},${cy + 54}" fill="${stemColor}" opacity="0.85" />`;
+  const stem = `<path d="M${cx},${cy + 66} C${cx},${cy + 36} ${cx},${cy + 16} ${cx},${cy + 6}" stroke="${stemColor}" stroke-width="4" fill="none" stroke-linecap="round" />`;
+
+  let top = "";
+  if (health < 0.15) {
+    // graine / pousse : rien qu'un petit bourgeon fermé, terne
+    const p = clamp01(health / 0.15);
+    const budColor = `hsl(95 ${10 + p * 20}% ${30 + p * 10}%)`;
+    top = `<ellipse cx="${cx}" cy="${cy + 4}" rx="${4 + p * 3}" ry="${7 + p * 4}" fill="${budColor}" />`;
+  } else if (health < 0.45) {
+    // bouton : les 3 sépales se forment, encore fermés, pas de lèvre
+    const p = clamp01((health - 0.15) / 0.3);
+    const sepals = [
+      { angle: 0, hue: 100 + p * 190 },
+      { angle: -132, hue: 100 + p * 175 },
+      { angle: 132, hue: 100 + p * 175 },
+    ];
+    top = sepals.map((s) => orchidPetalSVG(s.angle, cx, cy, 0.15 + p * 0.35, false, s.hue)).join("");
+  } else if (health < 0.75) {
+    // pré-floraison : les 2 pétales larges apparaissent, toujours pas de lèvre
+    const p = clamp01((health - 0.45) / 0.3);
+    const layout = [
+      { angle: 0, wide: false, hue: 300 },
+      { angle: -52, wide: true, hue: 315 },
+      { angle: 52, wide: true, hue: 315 },
+      { angle: -132, wide: false, hue: 285 },
+      { angle: 132, wide: false, hue: 285 },
+    ];
+    top = layout.map((pt) => orchidPetalSVG(pt.angle, cx, cy, 0.4 + p * 0.3, pt.wide, pt.hue)).join("");
+  } else {
+    // fleur épanouie : tout, y compris la lèvre caractéristique
+    const p = clamp01((health - 0.75) / 0.25);
+    const layout = [
+      { angle: 0, wide: false, hue: 300 },
+      { angle: -52, wide: true, hue: 315 },
+      { angle: 52, wide: true, hue: 315 },
+      { angle: -132, wide: false, hue: 285 },
+      { angle: 132, wide: false, hue: 285 },
+    ];
+    const petalHealth = 0.7 + p * 0.3;
+    const columnColor = `hsl(45 ${25 + petalHealth * 55}% ${72 - petalHealth * 12}%)`;
+    top = layout.map((pt) => orchidPetalSVG(pt.angle, cx, cy, petalHealth, pt.wide, pt.hue)).join("")
+      + orchidLipSVG(cx, cy, petalHealth)
+      + `<ellipse cx="${cx}" cy="${cy + 2}" rx="${6 + petalHealth * 2}" ry="${8 + petalHealth * 2}" fill="${columnColor}" />`;
+  }
+
+  return `<svg width="220" height="230" viewBox="0 0 220 230">
+    ${stem}
+    ${leaves}
+    ${top}
+    <text x="${cx}" y="${cy + 92}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--ink)">${monthData.tauxCharges.toFixed(0)}%</text>
+    <text x="${cx}" y="230" text-anchor="middle" font-size="10" letter-spacing="1" fill="${tone}">ÉQUILIBRE BUDGÉTAIRE</text>
+  </svg>`;
+}
+function miniFlowerSVG(hue, health, size) {
+  const sat = 15 + health * 70, light = 78 - health * 15;
+  const color = `hsl(${hue} ${sat}% ${light}%)`;
+  const c = size;
+  let petals = "";
+  [0, 72, 144, 216, 288].forEach((a) => {
+    petals += `<g transform="rotate(${a} ${c} ${c})"><ellipse cx="${c}" cy="${c - size * 0.55}" rx="${size * 0.32}" ry="${size * 0.45}" fill="${color}" opacity="0.95" /></g>`;
+  });
+  return `<svg width="${size * 2}" height="${size * 2}" viewBox="0 0 ${c * 2} ${c * 2}" style="flex-shrink:0">${petals}<circle cx="${c}" cy="${c}" r="${size * 0.28}" fill="var(--gold)" /></svg>`;
+}
+function budSVG(tauxCharges, hasData, hasRevenu) {
+  const health = healthFactor(tauxCharges, hasRevenu);
+  const color = hasData ? `hsl(330 ${20 + health * 60}% ${72 - health * 14}%)` : "var(--rule)";
+  const r = hasData ? 5 + health * 2 : 3;
+  return `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="${r}" fill="${color}" /></svg>`;
+}
+
+// ---------- state ----------
+let state = {
+  oneOff: [], recurring: [], epargneMouvements: [], epargneRecurrents: [], reportManuel: {}, loading: true, error: null,
+  cursor: todayISO().slice(0, 7),
+  formOpen: false, recurringPanelOpen: false, epargneFormOpen: false, epargnePanelOpen: false,
+  formType: "charge", freq: "ponctuelle", epargneFreq: "ponctuelle",
+  epargneFormContext: "epargne", epargnePanelContext: "epargne",
+  saving: false,
+  draft: { label: "", amount: "", date: todayISO(), day: "1" },
+  epargneDraft: { categorie: "enfants", type: "versement", amount: "", date: todayISO(), day: "1", startMonth: todayISO().slice(0, 7), endMonth: "" },
+};
+
+const COMPTE_LABELS = { enfants: "Enfants", couple: "Couple", courses: "Courses" };
+const COMPTE_HUE = { enfants: 265, couple: 10, courses: 20 };
+
+// solde cumulé d'un compte (enfants/couple/courses) jusqu'au mois affiché inclus,
+// mouvements ponctuels + instances des mouvements récurrents actifs sur la période
+function compteBalance(cat, cursor, mouvements, recurrents) {
+  let total = mouvements
+    .filter((m) => m.categorie === cat && monthKey(m.date) <= cursor)
+    .reduce((s, m) => s + (m.type === "versement" ? m.amount : -m.amount), 0);
+  recurrents.filter((r) => r.categorie === cat).forEach((r) => {
+    const end = r.endMonth && r.endMonth < cursor ? r.endMonth : cursor;
+    let m = r.startMonth, guard = 0;
+    while (m <= end && guard < 600) {
+      total += r.type === "versement" ? r.amount : -r.amount;
+      m = addMonths(m, 1);
+      guard++;
+    }
+  });
+  return total;
+}
+
+function loadData() {
+  try {
+    const res = storage.get("finance-data");
+    if (res && res.value) {
+      const parsed = JSON.parse(res.value);
+      state.oneOff = parsed.entries || [];
+      state.recurring = parsed.recurring || [];
+      state.epargneMouvements = parsed.epargneMouvements || [];
+      state.epargneRecurrents = parsed.epargneRecurrents || [];
+      state.reportManuel = parsed.reportManuel || {};
+    }
+  } catch (e) {}
+  state.loading = false;
+}
+function persist() {
+  state.saving = true;
+  try { storage.set("finance-data", JSON.stringify({ entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, epargneRecurrents: state.epargneRecurrents, reportManuel: state.reportManuel })); }
+  catch (e) { state.error = "Impossible d'enregistrer sur cet appareil."; }
+  state.saving = false;
+}
+
+// ---------- render ----------
+function logoSVG() {
+  return `<svg width="26" height="26" viewBox="0 0 40 40" style="flex-shrink:0">
+    <g transform="translate(20 21)">
+      <path d="M0,-4 C-9,-13 -8,-24 0,-29 C8,-24 9,-13 0,-4 Z" fill="hsl(300 55% 68%)" />
+      <path d="M0,-3 C-9,3 -17,1 -19,-8 C-11,-13 -3,-10 0,-3 Z" fill="hsl(315 60% 66%)" />
+      <path d="M0,-3 C9,3 17,1 19,-8 C11,-13 3,-10 0,-3 Z" fill="hsl(315 60% 66%)" />
+      <path d="M0,-2 C-7,3 -12,10 -8,17 C-1,15 3,8 0,-2 Z" fill="hsl(285 45% 64%)" />
+      <path d="M0,-2 C7,3 12,10 8,17 C1,15 -3,8 0,-2 Z" fill="hsl(285 45% 64%)" />
+      <path d="M0,0 C-9,4 -11,13 -5,18 C-2,21 2,21 5,18 C11,13 9,4 0,0 Z" fill="hsl(322 60% 55%)" />
+      <ellipse cx="0" cy="9" rx="3.4" ry="5" fill="hsl(45 60% 68%)" />
+    </g>
+  </svg>`;
+}
+
+function headerHTML() {
+  return `
+  <div class="row between" style="margin-bottom:4px">
+    <div class="row" style="gap:8px">
+      ${logoSVG()}
+      <h1 class="display" style="font-size:24px; font-weight:600; margin:0">Mon Jardin</h1>
+    </div>
+    <button class="icon-btn" data-action="open-recurring" style="font-size:10px; letter-spacing:1px; text-transform:uppercase">⚙ Récurrentes</button>
+  </div>
+  <div class="row between" style="margin-bottom:20px">
+    <p class="muted" style="font-size:12px; font-style:italic; margin:0">${state.saving ? "on arrose…" : "budget &amp; épargne, à ton rythme"}</p>
+    <div class="row" style="gap:12px">
+      <button class="link-btn" data-action="export-data">Exporter</button>
+      <button class="link-btn" data-action="trigger-import">Importer</button>
+    </div>
+  </div>`;
+}
+
+function monthNavHTML() {
+  const { full } = monthLabelOf(state.cursor);
+  return `
+  <div class="row between" style="margin-bottom:12px">
+    <button class="navbtn" data-action="prev-month">‹</button>
+    <span style="font-size:14px; font-weight:500">${full}</span>
+    <button class="navbtn" data-action="next-month">›</button>
+  </div>`;
+}
+
+function monthStripHTML() {
+  let chips = "";
+  for (let i = -3; i <= 2; i++) {
+    const c = addMonths(state.cursor, i);
+    const d = computeMonth(c, state.oneOff, state.recurring);
+    const lbl = monthLabelOf(c);
+    const active = c === state.cursor;
+    chips += `<button class="month-chip ${active ? "active" : ""}" data-action="goto-month" data-cursor="${c}">
+      <span class="muted" style="font-size:10px; text-transform:uppercase">${lbl.abr}</span>
+      ${budSVG(d.tauxCharges, d.all.length > 0, d.revenus > 0)}
+    </button>`;
+  }
+  return `<div class="month-strip">${chips}</div>`;
+}
+
+function heroCardHTML(monthData) {
+  const health = healthFactor(monthData.tauxCharges, monthData.revenus > 0);
+  const disponible = monthData.report + monthData.epargne;
+  return `
+  <div class="card" style="display:flex; flex-direction:column; align-items:center; margin-bottom:20px">
+    ${heroFlowerSVG(monthData)}
+    <div style="width:100%; margin-top:8px">
+      <div class="statline"><span class="muted" style="font-size:14px">Revenus</span><span style="color:var(--stem); font-weight:600">${fmtEUR(monthData.revenus)}</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">Charges</span><span style="color:var(--danger); font-weight:600">${fmtEUR(monthData.charges)}</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">Budget disponible du mois</span><span style="font-weight:600; color:${monthData.epargne < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(monthData.epargne)}</span></div>
+      <div class="row between" style="padding-top:8px">
+        <span class="muted" style="font-size:14px">Disponible cumulé</span>
+        <span style="font-size:18px; font-weight:700; color:${disponible < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(disponible)}</span>
+      </div>
+    </div>
+    <div style="width:100%; margin-top:14px; padding-top:14px; border-top:1px solid var(--rule)">
+      <label class="field-label">Budget restant mois précédent (€)</label>
+      <input id="report-manuel" type="number" inputmode="decimal" value="${monthData.report || ""}" placeholder="0" style="margin-bottom:0" />
+    </div>
+    ${health < 0.4 ? `<p style="font-size:12px; margin-top:12px; text-align:center; color:var(--danger)">La plante peine ce mois-ci — les charges dépassent l'objectif de 50% des revenus.</p>` : ""}
+  </div>`;
+}
+
+const CONTEXT_CATS = { epargne: ["enfants", "couple"], courses: ["courses"] };
+const CONTEXT_TITLES = { epargne: "Épargne", courses: "Courses" };
+
+function comptesCardHTML(context) {
+  const cats = CONTEXT_CATS[context];
+  const rows = cats.map((cat, i) => {
+    const balance = compteBalance(cat, state.cursor, state.epargneMouvements, state.epargneRecurrents);
+    const isLast = i === cats.length - 1;
+    return `<div class="${isLast ? "row between" : "statline"}" style="${isLast ? "padding-top:8px" : ""}">
+      <span class="row muted" style="font-size:14px; gap:6px">${miniFlowerSVG(COMPTE_HUE[cat], 1, 9)} ${COMPTE_LABELS[cat]}</span>
+      <span style="font-weight:600; color:${balance < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(balance)}</span>
+    </div>`;
+  }).join("");
+  return `
+  <div class="card" style="margin-bottom:20px">
+    <div class="row between" style="margin-bottom:12px">
+      <div class="eyebrow" style="margin-bottom:0">${CONTEXT_TITLES[context]}</div>
+      <div class="row" style="gap:14px">
+        <button class="link-btn" data-action="open-epargne-panel" data-ctx="${context}">Historique</button>
+        <button class="icon-btn" data-action="open-epargne-form" data-ctx="${context}" style="font-size:16px; font-weight:700">+</button>
+      </div>
+    </div>
+    ${rows}
+    <p class="muted" style="font-size:11px; margin:10px 0 0">Se cumule mois après mois, par versements et retraits ponctuels ou récurrents.</p>
+  </div>`;
+}
+
+function epargneFormSheetHTML() {
+  if (!state.epargneFormOpen) return "";
+  const cats = CONTEXT_CATS[state.epargneFormContext];
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-epargne-form">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Mouvement — ${CONTEXT_TITLES[state.epargneFormContext]}</h2>
+        <button class="icon-btn" data-action="close-epargne-form" style="font-size:20px">✕</button>
+      </div>
+      ${cats.length > 1 ? `
+      <div class="segmented">
+        ${cats.map((cat) => `<button class="${state.epargneDraft.categorie === cat ? "active-gold" : ""}" style="display:flex; align-items:center; justify-content:center; gap:4px" data-action="set-epargne-cat" data-cat="${cat}">${miniFlowerSVG(COMPTE_HUE[cat], 1, 7)} ${COMPTE_LABELS[cat]}</button>`).join("")}
+      </div>` : ""}
+      <div class="segmented">
+        <button class="${state.epargneDraft.type === "versement" ? "active-revenu" : ""}" data-action="set-epargne-type" data-type="versement">Versement</button>
+        <button class="${state.epargneDraft.type === "retrait" ? "active-charge" : ""}" data-action="set-epargne-type" data-type="retrait">Retrait</button>
+      </div>
+      <div class="segmented">
+        <button class="${state.epargneFreq === "ponctuelle" ? "active-gold" : ""}" data-action="set-epargne-freq" data-freq="ponctuelle">Ponctuel</button>
+        <button class="${state.epargneFreq === "recurrente" ? "active-gold" : ""}" data-action="set-epargne-freq" data-freq="recurrente">Récurrent</button>
+      </div>
+      <label class="field-label">Montant (€)</label>
+      <input id="f-epargne-amount" inputmode="decimal" placeholder="0" />
+      ${state.epargneFreq === "ponctuelle" ? `
+      <label class="field-label">Date</label>
+      <input id="f-epargne-date" type="date" />
+      ` : `
+      <label class="field-label">Échéance (jour du mois)</label>
+      <input id="f-epargne-day" inputmode="numeric" placeholder="1-31" />
+      <div class="row" style="gap:12px">
+        <div style="flex:1"><label class="field-label">Date de début</label><input id="f-epargne-startmonth" type="month" /></div>
+        <div style="flex:1"><label class="field-label">Date de fin (optionnelle)</label><input id="f-epargne-endmonth" type="month" /></div>
+      </div>
+      <p class="muted" style="font-size:12px; margin:-4px 0 16px; font-style:italic">Ce mouvement sera répété automatiquement chaque mois sur la période choisie.</p>
+      `}
+      <button class="btn-primary" data-action="add-epargne">Ajouter</button>
+    </div>
+  </div>`;
+}
+
+function epargnePanelHTML() {
+  if (!state.epargnePanelOpen) return "";
+  const cats = CONTEXT_CATS[state.epargnePanelContext];
+  const recurrents = state.epargneRecurrents.filter((r) => cats.includes(r.categorie));
+  const mvts = state.epargneMouvements.filter((m) => cats.includes(m.categorie)).sort((a, b) => (a.date < b.date ? 1 : -1));
+  let recBody;
+  if (recurrents.length === 0) {
+    recBody = `<p class="muted" style="font-size:13px; padding:8px 0; font-style:italic">Aucun mouvement récurrent pour l'instant.</p>`;
+  } else {
+    recBody = recurrents.map((r) => `
+      <div class="entry-row" style="flex-wrap:wrap">
+        <div style="min-width:0; padding-right:8px">
+          <div style="display:flex; align-items:center; gap:6px; font-size:14px">${miniFlowerSVG(COMPTE_HUE[r.categorie], 1, 8)} ${COMPTE_LABELS[r.categorie]}</div>
+          <div class="muted" style="font-size:10px">${r.type === "versement" ? "Versement" : "Retrait"} · échéance le ${r.day} · depuis ${monthLabelOf(r.startMonth).full}${r.endMonth ? ` · jusqu'à ${monthLabelOf(r.endMonth).full}` : ""}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; color:${r.type === "versement" ? "var(--stem)" : "var(--danger)"}">${r.type === "versement" ? "+" : "−"}${fmtEUR(r.amount)}</span>
+          <button class="icon-btn" data-action="remove-epargne-recurrent" data-id="${r.id}">🗑</button>
+        </div>
+      </div>`).join("");
+  }
+  let body;
+  if (mvts.length === 0) {
+    body = `<p class="muted" style="font-size:14px; padding:16px 0; text-align:center; font-style:italic">Aucun mouvement ponctuel pour l'instant.</p>`;
+  } else {
+    body = mvts.map((m) => `
+      <div class="entry-row">
+        <div style="min-width:0; padding-right:8px">
+          <div style="display:flex; align-items:center; gap:6px; font-size:14px">${miniFlowerSVG(COMPTE_HUE[m.categorie], 1, 8)} ${COMPTE_LABELS[m.categorie]}</div>
+          <div class="muted" style="font-size:10px">${m.type === "versement" ? "Versement" : "Retrait"} · ${m.date.slice(8, 10)}/${m.date.slice(5, 7)}/${m.date.slice(0, 4)}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; color:${m.type === "versement" ? "var(--stem)" : "var(--danger)"}">${m.type === "versement" ? "+" : "−"}${fmtEUR(m.amount)}</span>
+          <button class="icon-btn" data-action="remove-epargne" data-id="${m.id}">🗑</button>
+        </div>
+      </div>`).join("");
+  }
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-epargne-panel">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Historique — ${CONTEXT_TITLES[state.epargnePanelContext]}</h2>
+        <button class="icon-btn" data-action="close-epargne-panel" style="font-size:20px">✕</button>
+      </div>
+      <div class="eyebrow">Récurrents</div>
+      ${recBody}
+      <div class="eyebrow" style="margin-top:14px">Ponctuels</div>
+      ${body}
+    </div>
+  </div>`;
+}
+
+function categoryCardHTML(monthData) {
+  const map = {};
+  monthData.all.filter((e) => e.type === "charge").forEach((e) => { map[e.category] = (map[e.category] || 0) + e.amount; });
+  const byCategory = Object.entries(map).sort((a, b) => b[1] - a[1]);
+  if (byCategory.length === 0) return "";
+  const maxCat = byCategory[0][1];
+  const health = healthFactor(monthData.tauxCharges, monthData.revenus > 0);
+  let rows = "";
+  byCategory.forEach(([cat, amt]) => {
+    const hue = CAT_HUE[cat] || 0;
+    rows += `
+    <div class="row" style="gap:12px; margin-bottom:12px">
+      ${miniFlowerSVG(hue, health, 16)}
+      <div style="flex:1; min-width:0">
+        <div class="row between" style="font-size:12px; margin-bottom:4px"><span>${esc(cat)}</span><span>${fmtEUR(amt)}</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${(amt / maxCat) * 100}%; background:hsl(${hue} ${20 + health * 60}% ${65 - health * 15}%)"></div></div>
+      </div>
+    </div>`;
+  });
+  return `<div class="card" style="margin-bottom:20px"><div class="eyebrow">Parterre des charges</div>${rows}</div>`;
+}
+
+function entriesCardHTML(monthData) {
+  const entries = [...monthData.all].sort((a, b) => (a.date < b.date ? 1 : -1));
+  let body;
+  if (entries.length === 0) {
+    body = `<p class="muted" style="font-size:14px; padding:24px 0; text-align:center; font-style:italic">Aucune écriture ce mois-ci. Ajoute un revenu ou une charge.</p>`;
+  } else {
+    body = entries.map((e) => `
+      <div class="entry-row">
+        <div style="min-width:0; padding-right:8px">
+          <div class="row" style="gap:6px">
+            <span style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${esc(e.label)}</span>
+            ${e.recurring ? `<span style="color:var(--gold); font-size:12px">⟳</span>` : ""}
+          </div>
+          <div class="muted" style="font-size:10px">${esc(e.category)} · ${e.date.slice(8, 10)}/${e.date.slice(5, 7)}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; color:${e.type === "revenu" ? "var(--stem)" : "var(--danger)"}">${e.type === "revenu" ? "+" : "−"}${fmtEUR(e.amount)}</span>
+          ${!e.recurring ? `<button class="icon-btn" data-action="remove-oneoff" data-id="${e.id}">🗑</button>` : ""}
+        </div>
+      </div>`).join("");
+  }
+  return `<div class="card">
+    <div class="eyebrow">Écritures</div>
+    ${body}
+  </div>
+  ${state.error ? `<p style="text-align:center; font-size:12px; margin-top:16px; color:var(--danger)">${esc(state.error)}</p>` : ""}`;
+}
+
+function formSheetHTML() {
+  if (!state.formOpen) return "";
+  const { full } = monthLabelOf(state.cursor);
+  const cats = state.formType === "revenu" ? REVENU_CATS : CHARGE_CATS;
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-form">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Nouvelle écriture</h2>
+        <button class="icon-btn" data-action="close-form" style="font-size:20px">✕</button>
+      </div>
+      <div class="segmented">
+        <button class="${state.formType === "revenu" ? "active-revenu" : ""}" data-action="set-type" data-type="revenu">Revenu</button>
+        <button class="${state.formType === "charge" ? "active-charge" : ""}" data-action="set-type" data-type="charge">Charge</button>
+      </div>
+      <div class="segmented">
+        <button class="${state.freq === "ponctuelle" ? "active-gold" : ""}" data-action="set-freq" data-freq="ponctuelle">Ponctuelle</button>
+        <button class="${state.freq === "recurrente" ? "active-gold" : ""}" data-action="set-freq" data-freq="recurrente">Mensuelle</button>
+      </div>
+      <label class="field-label">Libellé</label>
+      <input id="f-label" placeholder="${state.formType === "revenu" ? "Salaire" : "Loyer"}" />
+      <label class="field-label">Catégorie</label>
+      <select id="f-cat">${cats.map((c) => `<option value="${c}">${c}</option>`).join("")}</select>
+      <div class="row" style="gap:12px">
+        <div style="flex:1">
+          <label class="field-label">Montant (€)</label>
+          <input id="f-amount" inputmode="decimal" placeholder="0" />
+        </div>
+        <div style="flex:1">
+          ${state.freq === "ponctuelle"
+            ? `<label class="field-label">Date</label><input id="f-date" type="date" />`
+            : `<label class="field-label">Échéance (jour)</label><input id="f-day" inputmode="numeric" placeholder="1-31" />`}
+        </div>
+      </div>
+      ${state.freq === "recurrente" ? `
+      <label class="field-label">Date de début</label>
+      <input id="f-startmonth" type="month" />
+      <label class="field-label">Date de fin (optionnelle)</label>
+      <input id="f-endmonth" type="month" />
+      <p class="muted" style="font-size:12px; margin:-4px 0 16px; font-style:italic">Cette écriture sera ajoutée automatiquement chaque mois, jusqu'à la date de fin si tu en indiques une.</p>` : ""}
+      <button class="btn-primary" data-action="add-entry">Ajouter</button>
+    </div>
+  </div>`;
+}
+
+function recurringSheetHTML() {
+  if (!state.recurringPanelOpen) return "";
+  let body;
+  if (state.recurring.length === 0) {
+    body = `<p class="muted" style="font-size:14px; padding:16px 0; text-align:center; font-style:italic">Aucune charge ou revenu mensuel pour l'instant. Ajoute-en un via le bouton "+" en choisissant "Mensuelle".</p>`;
+  } else {
+    body = state.recurring.map((r) => `
+      <div class="entry-row" style="flex-wrap:wrap">
+        <div style="min-width:0; padding-right:8px">
+          <div style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${esc(r.label)}</div>
+          <div class="muted" style="font-size:10px">${esc(r.category)} · échéance le ${r.day} · depuis ${monthLabelOf(r.startMonth).full}${r.endMonth ? ` · jusqu'à ${monthLabelOf(r.endMonth).full}` : ""}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; color:${r.type === "revenu" ? "var(--stem)" : "var(--danger)"}">${r.type === "revenu" ? "+" : "−"}${fmtEUR(r.amount)}</span>
+          <button class="icon-btn" data-action="remove-recurring" data-id="${r.id}">🗑</button>
+        </div>
+        <div class="row" style="gap:6px; width:100%; margin-top:6px; flex-wrap:wrap">
+          <label class="field-label" style="margin:0; flex-shrink:0">Début :</label>
+          <input type="month" class="recurring-start-input" data-id="${r.id}" value="${r.startMonth}" style="margin-bottom:0; padding:5px 8px; font-size:12px; width:auto" />
+          <label class="field-label" style="margin:0; flex-shrink:0">Fin :</label>
+          <input type="month" class="recurring-end-input" data-id="${r.id}" value="${r.endMonth || ""}" style="margin-bottom:0; padding:5px 8px; font-size:12px; width:auto" />
+          ${r.endMonth ? `<button class="icon-btn" data-action="clear-end-month" data-id="${r.id}" style="font-size:11px; text-decoration:underline">retirer</button>` : ""}
+        </div>
+      </div>`).join("");
+  }
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-recurring">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Écritures récurrentes</h2>
+        <button class="icon-btn" data-action="close-recurring" style="font-size:20px">✕</button>
+      </div>
+      ${body}
+    </div>
+  </div>`;
+}
+
+function render() {
+  const root = document.getElementById("root");
+  if (state.loading) {
+    root.innerHTML = `<div class="wrap"><div class="muted" style="text-align:center; padding:80px 0">Le jardin s'ouvre…</div></div>`;
+    return;
+  }
+  const monthData = computeMonth(state.cursor, state.oneOff, state.recurring);
+  monthData.report = getReportManuel(state.cursor);
+  root.innerHTML = `
+    <div class="wrap">
+      ${headerHTML()}
+      ${monthNavHTML()}
+      ${monthStripHTML()}
+      ${heroCardHTML(monthData)}
+      ${comptesCardHTML("epargne")}
+      ${comptesCardHTML("courses")}
+      ${categoryCardHTML(monthData)}
+      ${entriesCardHTML(monthData)}
+    </div>
+    <button class="fab" data-action="open-form">+</button>
+    ${formSheetHTML()}
+    ${recurringSheetHTML()}
+    ${epargneFormSheetHTML()}
+    ${epargnePanelHTML()}
+    <input id="import-file" type="file" accept="application/json" style="display:none" />
+  `;
+  // restore draft values into the (freshly rebuilt) form inputs
+  if (state.formOpen) {
+    const l = document.getElementById("f-label"); if (l) l.value = state.draft.label;
+    const a = document.getElementById("f-amount"); if (a) a.value = state.draft.amount;
+    const d = document.getElementById("f-date"); if (d) d.value = state.draft.date;
+    const day = document.getElementById("f-day"); if (day) day.value = state.draft.day;
+    const startmonth = document.getElementById("f-startmonth"); if (startmonth) startmonth.value = state.draft.startMonth || state.cursor;
+    const endmonth = document.getElementById("f-endmonth"); if (endmonth) endmonth.value = state.draft.endMonth || "";
+    const cat = document.getElementById("f-cat"); if (cat) cat.value = state.draft.category || cat.value;
+  }
+  if (state.epargneFormOpen) {
+    const ea = document.getElementById("f-epargne-amount"); if (ea) ea.value = state.epargneDraft.amount;
+    const ed = document.getElementById("f-epargne-date"); if (ed) ed.value = state.epargneDraft.date;
+    const eday = document.getElementById("f-epargne-day"); if (eday) eday.value = state.epargneDraft.day;
+    const esm = document.getElementById("f-epargne-startmonth"); if (esm) esm.value = state.epargneDraft.startMonth || state.cursor;
+    const eem = document.getElementById("f-epargne-endmonth"); if (eem) eem.value = state.epargneDraft.endMonth || "";
+  }
+}
+
+function captureDraft() {
+  if (!state.formOpen) return;
+  const l = document.getElementById("f-label"); if (l) state.draft.label = l.value;
+  const a = document.getElementById("f-amount"); if (a) state.draft.amount = a.value;
+  const d = document.getElementById("f-date"); if (d) state.draft.date = d.value;
+  const day = document.getElementById("f-day"); if (day) state.draft.day = day.value;
+  const startmonth = document.getElementById("f-startmonth"); if (startmonth) state.draft.startMonth = startmonth.value;
+  const endmonth = document.getElementById("f-endmonth"); if (endmonth) state.draft.endMonth = endmonth.value;
+  const cat = document.getElementById("f-cat"); if (cat) state.draft.category = cat.value;
+}
+function captureEpargneDraft() {
+  if (!state.epargneFormOpen) return;
+  const ea = document.getElementById("f-epargne-amount"); if (ea) state.epargneDraft.amount = ea.value;
+  const ed = document.getElementById("f-epargne-date"); if (ed) state.epargneDraft.date = ed.value;
+  const eday = document.getElementById("f-epargne-day"); if (eday) state.epargneDraft.day = eday.value;
+  const esm = document.getElementById("f-epargne-startmonth"); if (esm) state.epargneDraft.startMonth = esm.value;
+  const eem = document.getElementById("f-epargne-endmonth"); if (eem) state.epargneDraft.endMonth = eem.value;
+}
+
+function update() { captureDraft(); render(); }
+
+// ---------- actions ----------
+function exportData() {
+  const payload = { exportedAt: new Date().toISOString(), entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, epargneRecurrents: state.epargneRecurrents, reportManuel: state.reportManuel };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `mon-jardin-budget-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function handleImportFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      const importedEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
+      const importedRecurring = Array.isArray(parsed.recurring) ? parsed.recurring : [];
+      const importedEpargne = Array.isArray(parsed.epargneMouvements) ? parsed.epargneMouvements : [];
+      const importedEpargneRec = Array.isArray(parsed.epargneRecurrents) ? parsed.epargneRecurrents : [];
+      const existingIds = new Set(state.oneOff.map((x) => x.id));
+      const existingRecIds = new Set(state.recurring.map((x) => x.id));
+      const existingEpargneIds = new Set(state.epargneMouvements.map((x) => x.id));
+      const existingEpargneRecIds = new Set(state.epargneRecurrents.map((x) => x.id));
+      state.oneOff = [...state.oneOff, ...importedEntries.filter((x) => x && x.id && !existingIds.has(x.id))];
+      state.recurring = [...state.recurring, ...importedRecurring.filter((x) => x && x.id && !existingRecIds.has(x.id))];
+      state.epargneMouvements = [...state.epargneMouvements, ...importedEpargne.filter((x) => x && x.id && !existingEpargneIds.has(x.id))];
+      state.epargneRecurrents = [...state.epargneRecurrents, ...importedEpargneRec.filter((x) => x && x.id && !existingEpargneRecIds.has(x.id))];
+      if (parsed.reportManuel) state.reportManuel = { ...state.reportManuel, ...parsed.reportManuel };
+      persist();
+      state.error = null;
+    } catch (err) {
+      state.error = "Ce fichier ne semble pas être une sauvegarde valide de Mon Jardin.";
+    }
+    update();
+  };
+  reader.readAsText(file);
+}
+
+document.addEventListener("click", (e) => {
+  // tap sur le fond sombre (en dehors de la fenêtre) : on la ferme
+  // (attribut séparé data-overlay-close, volontairement PAS data-action,
+  // pour que closest("[data-action]") ne le trouve jamais en remontant
+  // depuis un clic anodin — ex: un tap dans un champ de texte — à l'intérieur de la fenêtre)
+  if (e.target.classList && e.target.classList.contains("sheet-overlay")) {
+    const overlayAction = e.target.getAttribute("data-overlay-close");
+    if (overlayAction === "close-form") state.formOpen = false;
+    if (overlayAction === "close-recurring") state.recurringPanelOpen = false;
+    update();
+    return;
+  }
+  const btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  const action = btn.getAttribute("data-action");
+  switch (action) {
+    case "prev-month": state.cursor = addMonths(state.cursor, -1); update(); break;
+    case "next-month": state.cursor = addMonths(state.cursor, 1); update(); break;
+    case "goto-month": state.cursor = btn.getAttribute("data-cursor"); update(); break;
+    case "open-form":
+      state.formOpen = true;
+      state.draft = { label: "", amount: "", date: todayISO(), day: "1", startMonth: state.cursor, endMonth: "", category: state.formType === "revenu" ? REVENU_CATS[0] : CHARGE_CATS[0] };
+      update();
+      break;
+    case "close-form": state.formOpen = false; update(); break;
+    case "open-recurring": state.recurringPanelOpen = true; update(); break;
+    case "close-recurring": state.recurringPanelOpen = false; update(); break;
+    case "set-type": {
+      captureDraft();
+      state.formType = btn.getAttribute("data-type");
+      state.draft.category = state.formType === "revenu" ? REVENU_CATS[0] : CHARGE_CATS[0];
+      render();
+      break;
+    }
+    case "set-freq": {
+      captureDraft();
+      state.freq = btn.getAttribute("data-freq");
+      render();
+      break;
+    }
+    case "add-entry": {
+      captureDraft();
+      const amt = parseFloat(String(state.draft.amount).replace(",", "."));
+      if (!state.draft.label || !state.draft.label.trim() || !amt || amt <= 0) return;
+      if (state.freq === "ponctuelle") {
+        state.oneOff.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, date: state.draft.date || todayISO() });
+      } else {
+        state.recurring.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, day: Math.max(1, Math.min(31, parseInt(state.draft.day, 10) || 1)), startMonth: state.draft.startMonth || state.cursor, endMonth: state.draft.endMonth || null });
+      }
+      persist();
+      state.formOpen = false;
+      update();
+      break;
+    }
+    case "remove-oneoff": {
+      const id = btn.getAttribute("data-id");
+      state.oneOff = state.oneOff.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "remove-recurring": {
+      const id = btn.getAttribute("data-id");
+      state.recurring = state.recurring.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "clear-end-month": {
+      const id = btn.getAttribute("data-id");
+      const r = state.recurring.find((x) => x.id === id);
+      if (r) r.endMonth = null;
+      persist();
+      update();
+      break;
+    }
+    case "open-epargne-form": {
+      const ctx = btn.getAttribute("data-ctx") || "epargne";
+      state.epargneFormOpen = true;
+      state.epargneFreq = "ponctuelle";
+      state.epargneFormContext = ctx;
+      state.epargneDraft = { categorie: CONTEXT_CATS[ctx][0], type: "versement", amount: "", date: todayISO(), day: "1", startMonth: state.cursor, endMonth: "" };
+      update();
+      break;
+    }
+    case "close-epargne-form": state.epargneFormOpen = false; update(); break;
+    case "open-epargne-panel":
+      state.epargnePanelContext = btn.getAttribute("data-ctx") || "epargne";
+      state.epargnePanelOpen = true;
+      update();
+      break;
+    case "close-epargne-panel": state.epargnePanelOpen = false; update(); break;
+    case "set-epargne-cat": {
+      captureEpargneDraft();
+      state.epargneDraft.categorie = btn.getAttribute("data-cat");
+      render();
+      break;
+    }
+    case "set-epargne-type": {
+      captureEpargneDraft();
+      state.epargneDraft.type = btn.getAttribute("data-type");
+      render();
+      break;
+    }
+    case "set-epargne-freq": {
+      captureEpargneDraft();
+      state.epargneFreq = btn.getAttribute("data-freq");
+      render();
+      break;
+    }
+    case "add-epargne": {
+      captureEpargneDraft();
+      const amt = parseFloat(String(state.epargneDraft.amount).replace(",", "."));
+      if (!amt || amt <= 0) return;
+      if (state.epargneFreq === "ponctuelle") {
+        state.epargneMouvements.push({
+          id: uid(), categorie: state.epargneDraft.categorie, type: state.epargneDraft.type,
+          amount: Math.round(amt * 100) / 100, date: state.epargneDraft.date || todayISO(),
+        });
+      } else {
+        state.epargneRecurrents.push({
+          id: uid(), categorie: state.epargneDraft.categorie, type: state.epargneDraft.type,
+          amount: Math.round(amt * 100) / 100, day: Math.max(1, Math.min(31, parseInt(state.epargneDraft.day, 10) || 1)),
+          startMonth: state.epargneDraft.startMonth || state.cursor, endMonth: state.epargneDraft.endMonth || null,
+        });
+      }
+      persist();
+      state.epargneFormOpen = false;
+      update();
+      break;
+    }
+    case "remove-epargne": {
+      const id = btn.getAttribute("data-id");
+      state.epargneMouvements = state.epargneMouvements.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "remove-epargne-recurrent": {
+      const id = btn.getAttribute("data-id");
+      state.epargneRecurrents = state.epargneRecurrents.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "export-data": exportData(); break;
+    case "trigger-import": {
+      const input = document.getElementById("import-file");
+      if (input) input.click();
+      break;
+    }
+    case "close-overlay": break;
+  }
+  if (action === "close-form" || action === "close-recurring") return;
+  if (btn.classList.contains("sheet-overlay")) update();
+});
+
+
+document.addEventListener("change", (e) => {
+  if (e.target && e.target.id === "import-file") {
+    const file = e.target.files && e.target.files[0];
+    if (file) handleImportFile(file);
+    e.target.value = "";
+    return;
+  }
+  if (e.target && e.target.id === "report-manuel") {
+    state.reportManuel[state.cursor] = parseFloat(e.target.value) || 0;
+    persist();
+    update();
+    return;
+  }
+  if (e.target && e.target.classList && e.target.classList.contains("recurring-start-input")) {
+    const id = e.target.getAttribute("data-id");
+    const r = state.recurring.find((x) => x.id === id);
+    if (r && e.target.value) r.startMonth = e.target.value;
+    persist();
+    update();
+    return;
+  }
+  if (e.target && e.target.classList && e.target.classList.contains("recurring-end-input")) {
+    const id = e.target.getAttribute("data-id");
+    const r = state.recurring.find((x) => x.id === id);
+    if (r) r.endMonth = e.target.value || null;
+    persist();
+    update();
+  }
+});
+
+loadData();
+render();
+</script>
+
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
