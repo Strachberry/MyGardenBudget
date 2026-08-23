@@ -7,6 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="theme-color" content="#EEEAF0" />
 <title>Mon Jardin — Budget</title>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="icon-192.png" />
 <link rel="apple-touch-icon" href="icon-192.png" />
@@ -62,6 +64,79 @@ const storage = {
   get: (key) => { const v = localStorage.getItem(key); return v !== null ? { key, value: v } : null; },
   set: (key, value) => { localStorage.setItem(key, value); return { key, value }; },
 };
+
+// ---------- synchronisation multi-appareils (Firebase Firestore) ----------
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyACyRGJKsXJiDsBiYL5YMqLEgd-dWbLheQ",
+  authDomain: "mybudgetgarden-1477c.firebaseapp.com",
+  projectId: "mybudgetgarden-1477c",
+  storageBucket: "mybudgetgarden-1477c.firebasestorage.app",
+  messagingSenderId: "155338153327",
+  appId: "1:155338153327:web:a565d9a7a5d23c2fdddc9a",
+};
+let firebaseApp = null, firestoreDb = null, syncUnsubscribe = null, syncDocRef = null;
+function ensureFirebase() {
+  if (firestoreDb) return true;
+  try {
+    firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
+    firestoreDb = firebase.firestore();
+    return true;
+  } catch (e) { return false; }
+}
+function genSyncCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s = "";
+  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+function buildSyncPayload() {
+  return {
+    entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements,
+    epargneRecurrents: state.epargneRecurrents, reportManuel: state.reportManuel, updatedAt: Date.now(),
+  };
+}
+function applyRemotePayload(data) {
+  state.applyingRemote = true;
+  state.oneOff = data.entries || [];
+  state.recurring = data.recurring || [];
+  state.epargneMouvements = data.epargneMouvements || [];
+  state.epargneRecurrents = data.epargneRecurrents || [];
+  state.reportManuel = data.reportManuel || {};
+  try { storage.set("finance-data", JSON.stringify({ entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, epargneRecurrents: state.epargneRecurrents, reportManuel: state.reportManuel })); } catch (e) {}
+  state.applyingRemote = false;
+}
+function startSync(code) {
+  if (!code) return;
+  if (!ensureFirebase()) { state.syncStatus = "Configuration Firebase indisponible."; render(); return; }
+  if (syncUnsubscribe) { syncUnsubscribe(); syncUnsubscribe = null; }
+  state.syncCode = code;
+  localStorage.setItem("sync-code", code);
+  syncDocRef = firestoreDb.collection("budgets").doc(code);
+  state.syncActive = true;
+  state.syncStatus = "Connexion…";
+  render();
+  syncUnsubscribe = syncDocRef.onSnapshot(
+    (snap) => {
+      if (snap.exists) {
+        applyRemotePayload(snap.data());
+      } else {
+        syncDocRef.set(buildSyncPayload()).catch(() => {});
+      }
+      state.syncStatus = "Synchronisé";
+      render();
+    },
+    (err) => { state.syncStatus = "Erreur de connexion"; render(); }
+  );
+}
+function stopSync() {
+  if (syncUnsubscribe) { syncUnsubscribe(); syncUnsubscribe = null; }
+  syncDocRef = null;
+  state.syncActive = false;
+  state.syncStatus = "";
+  state.syncCode = "";
+  localStorage.removeItem("sync-code");
+  render();
+}
 
 const REVENU_CATS = ["Salaire", "Primes", "Aides", "Autres revenus"];
 const CHARGE_CATS = ["Logement", "Alimentation", "Transport", "Enfants", "Loisirs", "Santé", "Autres charges"];
@@ -228,6 +303,7 @@ let state = {
   formOpen: false, recurringPanelOpen: false, epargneFormOpen: false, epargnePanelOpen: false, overrideOpen: false, overrideTemplateId: null, overrideAmount: "",
   treasuryOpen: false, treasuryContext: "global", treasuryAdjustOpen: false,
   treasuryAdjustDraft: { amount: "", cat: "enfants" },
+  syncCode: localStorage.getItem("sync-code") || "", syncActive: false, syncStatus: "", syncPanelOpen: false, applyingRemote: false,
   formType: "charge", freq: "ponctuelle", epargneFreq: "ponctuelle",
   epargneFormContext: "epargne", epargnePanelContext: "epargne",
   saving: false,
@@ -353,6 +429,9 @@ function persist() {
   try { storage.set("finance-data", JSON.stringify({ entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, epargneRecurrents: state.epargneRecurrents, reportManuel: state.reportManuel })); }
   catch (e) { state.error = "Impossible d'enregistrer sur cet appareil."; }
   state.saving = false;
+  if (state.syncActive && syncDocRef && !state.applyingRemote) {
+    syncDocRef.set(buildSyncPayload()).catch(() => { state.syncStatus = "Erreur de synchronisation"; });
+  }
 }
 
 // ---------- render ----------
@@ -383,6 +462,7 @@ function headerHTML() {
     <p class="muted" style="font-size:12px; font-style:italic; margin:0">${state.saving ? "on arrose…" : "budget &amp; épargne, à ton rythme"}</p>
     <div class="row" style="gap:12px">
       <button class="link-btn" data-action="open-treasury">Trésorerie</button>
+      <button class="link-btn" data-action="open-sync-panel">${state.syncActive ? "🔄 Synchro" : "Synchro"}</button>
       <button class="link-btn" data-action="export-data">Exporter</button>
       <button class="link-btn" data-action="trigger-import">Importer</button>
     </div>
@@ -781,6 +861,35 @@ function treasurySheetHTML() {
   </div>`;
 }
 
+function syncPanelHTML() {
+  if (!state.syncPanelOpen) return "";
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-sync-panel">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Synchronisation</h2>
+        <button class="icon-btn" data-action="close-sync-panel" style="font-size:20px">✕</button>
+      </div>
+      ${state.syncActive ? `
+      <p class="muted" style="font-size:13px; margin:0 0 10px">${state.syncStatus === "Synchronisé" ? "✅ Synchronisation active." : esc(state.syncStatus || "…")} Utilise ce code sur tes autres appareils pour qu'ils partagent les mêmes données :</p>
+      <div class="card" style="text-align:center; padding:18px; margin-bottom:14px; background:var(--ok-soft)">
+        <span style="font-family:'Courier New',monospace; font-size:26px; font-weight:700; letter-spacing:4px">${esc(state.syncCode)}</span>
+      </div>
+      <button class="btn-primary" data-action="copy-sync-code">Copier le code</button>
+      <button class="link-btn" data-action="stop-sync" style="display:block; text-align:center; margin:16px auto 0">Désactiver la synchronisation</button>
+      ` : `
+      <p class="muted" style="font-size:13px; margin:0 0 14px">Relie plusieurs appareils pour qu'ils partagent automatiquement les mêmes données, en temps réel.</p>
+      <button class="btn-primary" data-action="generate-sync-code" style="margin-bottom:16px">Créer un nouveau code (1er appareil)</button>
+      <div style="text-align:center; margin:4px 0 12px; color:var(--ink-soft); font-size:12px">— ou, si tu as déjà un code —</div>
+      <label class="field-label">Rejoindre avec un code existant</label>
+      <input id="f-sync-code" placeholder="ex : A7K2P9" style="text-transform:uppercase" />
+      <button class="btn-primary" data-action="join-sync-code">Rejoindre</button>
+      ${state.syncStatus ? `<p style="font-size:12px; text-align:center; margin-top:10px; color:var(--danger)">${esc(state.syncStatus)}</p>` : ""}
+      `}
+    </div>
+  </div>`;
+}
+
 function render() {
   const root = document.getElementById("root");
   if (state.loading) {
@@ -807,6 +916,7 @@ function render() {
     ${epargnePanelHTML()}
     ${amountOverrideSheetHTML()}
     ${treasurySheetHTML()}
+    ${syncPanelHTML()}
     <input id="import-file" type="file" accept="application/json" style="display:none" />
   `;
   // restore draft values into the (freshly rebuilt) form inputs
@@ -1012,6 +1122,21 @@ document.addEventListener("click", (e) => {
     case "open-treasury": state.treasuryOpen = true; update(); break;
     case "close-treasury": state.treasuryOpen = false; update(); break;
     case "set-treasury-ctx": state.treasuryContext = btn.getAttribute("data-ctx"); update(); break;
+    case "open-sync-panel": state.syncPanelOpen = true; update(); break;
+    case "close-sync-panel": state.syncPanelOpen = false; update(); break;
+    case "generate-sync-code": startSync(genSyncCode()); break;
+    case "join-sync-code": {
+      const input = document.getElementById("f-sync-code");
+      const code = input ? input.value.trim().toUpperCase() : "";
+      if (!code) return;
+      startSync(code);
+      break;
+    }
+    case "copy-sync-code": {
+      if (navigator.clipboard) navigator.clipboard.writeText(state.syncCode).catch(() => {});
+      break;
+    }
+    case "stop-sync": stopSync(); break;
     case "toggle-treasury-adjust": {
       captureTreasuryAdjustDraft();
       if (!state.treasuryAdjustOpen) {
@@ -1157,6 +1282,7 @@ document.addEventListener("change", (e) => {
 
 loadData();
 render();
+if (state.syncCode) startSync(state.syncCode);
 </script>
 
 <script>
