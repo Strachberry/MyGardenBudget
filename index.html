@@ -109,24 +109,9 @@ function computeMonth(cursor, oneOff, recurring) {
   return { all, revenus, charges, epargne, tauxEpargne, tauxCharges };
 }
 
-function earliestMonth(oneOff, recurring) {
-  const months = [];
-  oneOff.forEach((e) => months.push(monthKey(e.date)));
-  recurring.forEach((r) => months.push(r.startMonth));
-  if (months.length === 0) return null;
-  return months.sort()[0];
-}
-// solde reporté automatiquement : somme de l'épargne (ou du déficit) de tous les mois précédents
-function computeCarryover(cursor, oneOff, recurring) {
-  const earliest = earliestMonth(oneOff, recurring);
-  if (!earliest || earliest >= cursor) return 0;
-  let m = earliest, total = 0, guard = 0;
-  while (m < cursor && guard < 600) {
-    total += computeMonth(m, oneOff, recurring).epargne;
-    m = addMonths(m, 1);
-    guard++;
-  }
-  return total;
+// budget restant du mois précédent : saisi directement par l'utilisateur, mois par mois
+function getReportManuel(cursor) {
+  return state.reportManuel[cursor] || 0;
 }
 
 // ---------- SVG builders ----------
@@ -234,27 +219,35 @@ function budSVG(tauxCharges, hasData, hasRevenu) {
 
 // ---------- state ----------
 let state = {
-  oneOff: [], recurring: [], epargneMouvements: [], budgets: {}, loading: true, error: null,
+  oneOff: [], recurring: [], epargneMouvements: [], epargneRecurrents: [], reportManuel: {}, loading: true, error: null,
   cursor: todayISO().slice(0, 7),
   formOpen: false, recurringPanelOpen: false, epargneFormOpen: false, epargnePanelOpen: false,
-  formType: "charge", freq: "ponctuelle",
+  formType: "charge", freq: "ponctuelle", epargneFreq: "ponctuelle",
+  epargneFormContext: "epargne", epargnePanelContext: "epargne",
   saving: false,
   draft: { label: "", amount: "", date: todayISO(), day: "1" },
-  epargneDraft: { categorie: "enfants", type: "versement", amount: "", date: todayISO() },
+  epargneDraft: { categorie: "enfants", type: "versement", amount: "", date: todayISO(), day: "1", startMonth: todayISO().slice(0, 7), endMonth: "" },
 };
 
-// budget prévisionnel par catégorie : { "Alimentation": { "2026-08": 400 } }
-// reconduit automatiquement d'un mois sur l'autre (dernière valeur connue),
-// mais ajustable pour un mois précis sans toucher aux autres.
-function getBudget(cat, cursor) {
-  const map = state.budgets[cat] || {};
-  if (cursor in map) return map[cursor];
-  const priorKeys = Object.keys(map).filter((k) => k < cursor).sort();
-  return priorKeys.length ? map[priorKeys[priorKeys.length - 1]] : 0;
-}
-function setBudget(cat, cursor, value) {
-  if (!state.budgets[cat]) state.budgets[cat] = {};
-  state.budgets[cat][cursor] = value;
+const COMPTE_LABELS = { enfants: "Enfants", couple: "Couple", courses: "Courses" };
+const COMPTE_HUE = { enfants: 265, couple: 10, courses: 20 };
+
+// solde cumulé d'un compte (enfants/couple/courses) jusqu'au mois affiché inclus,
+// mouvements ponctuels + instances des mouvements récurrents actifs sur la période
+function compteBalance(cat, cursor, mouvements, recurrents) {
+  let total = mouvements
+    .filter((m) => m.categorie === cat && monthKey(m.date) <= cursor)
+    .reduce((s, m) => s + (m.type === "versement" ? m.amount : -m.amount), 0);
+  recurrents.filter((r) => r.categorie === cat).forEach((r) => {
+    const end = r.endMonth && r.endMonth < cursor ? r.endMonth : cursor;
+    let m = r.startMonth, guard = 0;
+    while (m <= end && guard < 600) {
+      total += r.type === "versement" ? r.amount : -r.amount;
+      m = addMonths(m, 1);
+      guard++;
+    }
+  });
+  return total;
 }
 
 function loadData() {
@@ -265,14 +258,15 @@ function loadData() {
       state.oneOff = parsed.entries || [];
       state.recurring = parsed.recurring || [];
       state.epargneMouvements = parsed.epargneMouvements || [];
-      state.budgets = parsed.budgets || {};
+      state.epargneRecurrents = parsed.epargneRecurrents || [];
+      state.reportManuel = parsed.reportManuel || {};
     }
   } catch (e) {}
   state.loading = false;
 }
 function persist() {
   state.saving = true;
-  try { storage.set("finance-data", JSON.stringify({ entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, budgets: state.budgets })); }
+  try { storage.set("finance-data", JSON.stringify({ entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, epargneRecurrents: state.epargneRecurrents, reportManuel: state.reportManuel })); }
   catch (e) { state.error = "Impossible d'enregistrer sur cet appareil."; }
   state.saving = false;
 }
@@ -344,89 +338,83 @@ function heroCardHTML(monthData) {
     <div style="width:100%; margin-top:8px">
       <div class="statline"><span class="muted" style="font-size:14px">Revenus</span><span style="color:var(--stem); font-weight:600">${fmtEUR(monthData.revenus)}</span></div>
       <div class="statline"><span class="muted" style="font-size:14px">Charges</span><span style="color:var(--danger); font-weight:600">${fmtEUR(monthData.charges)}</span></div>
-      <div class="statline"><span class="muted" style="font-size:14px">Report du mois précédent</span><span style="font-weight:600; color:${monthData.report < 0 ? "var(--danger)" : "var(--ink)"}">${fmtEUR(monthData.report)}</span></div>
-      <div class="statline"><span class="muted" style="font-size:14px">Épargne du mois</span><span style="font-weight:600; color:${monthData.epargne < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(monthData.epargne)}</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">Budget disponible du mois</span><span style="font-weight:600; color:${monthData.epargne < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(monthData.epargne)}</span></div>
       <div class="row between" style="padding-top:8px">
         <span class="muted" style="font-size:14px">Disponible cumulé</span>
         <span style="font-size:18px; font-weight:700; color:${disponible < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(disponible)}</span>
       </div>
     </div>
+    <div style="width:100%; margin-top:14px; padding-top:14px; border-top:1px solid var(--rule)">
+      <label class="field-label">Budget restant mois précédent (€)</label>
+      <input id="report-manuel" type="number" inputmode="decimal" value="${monthData.report || ""}" placeholder="0" style="margin-bottom:0" />
+    </div>
     ${health < 0.4 ? `<p style="font-size:12px; margin-top:12px; text-align:center; color:var(--danger)">La plante peine ce mois-ci — les charges dépassent l'objectif de 50% des revenus.</p>` : ""}
   </div>`;
 }
 
-function budgetCourseCardHTML(monthData) {
-  const cat = "Alimentation";
-  const budget = getBudget(cat, state.cursor);
-  const depense = monthData.all.filter((e) => e.type === "charge" && e.category === cat).reduce((s, e) => s + e.amount, 0);
-  const disponible = budget - depense;
-  const progress = budget > 0 ? clamp01(depense / budget) * 100 : 0;
-  return `
-  <div class="card" style="margin-bottom:20px">
-    <div class="row between" style="margin-bottom:12px">
-      <div class="eyebrow" style="margin-bottom:0">Budget courses (Alimentation)</div>
-    </div>
-    <label class="field-label">Budget prévu ce mois (€)</label>
-    <input id="budget-alim" type="number" inputmode="decimal" min="0" value="${budget || ""}" placeholder="0" style="margin-bottom:14px" />
-    <div class="statline"><span class="muted" style="font-size:14px">Dépensé</span><span style="font-weight:600; color:var(--danger)">${fmtEUR(depense)}</span></div>
-    <div class="row between" style="padding-top:8px; margin-bottom:${budget > 0 ? "10px" : "0"}">
-      <span class="muted" style="font-size:14px">Disponible</span>
-      <span style="font-size:18px; font-weight:700; color:${disponible < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(disponible)}</span>
-    </div>
-    ${budget > 0 ? `<div class="bar-track"><div class="bar-fill" style="width:${progress}%; background:${disponible < 0 ? "var(--danger)" : "var(--stem)"}"></div></div>` : `<p class="muted" style="font-size:11px; margin:0">Renseigne un budget prévu pour suivre ce qu'il te reste pour les courses et achats divers.</p>`}
-  </div>`;
-}
+const CONTEXT_CATS = { epargne: ["enfants", "couple"], courses: ["courses"] };
+const CONTEXT_TITLES = { epargne: "Épargne", courses: "Courses" };
 
-function epargneCardHTML() {
-  const balanceOf = (cat) => state.epargneMouvements
-    .filter((m) => m.categorie === cat)
-    .reduce((s, m) => s + (m.type === "versement" ? m.amount : -m.amount), 0);
-  const enfants = balanceOf("enfants");
-  const couple = balanceOf("couple");
+function comptesCardHTML(context) {
+  const cats = CONTEXT_CATS[context];
+  const rows = cats.map((cat, i) => {
+    const balance = compteBalance(cat, state.cursor, state.epargneMouvements, state.epargneRecurrents);
+    const isLast = i === cats.length - 1;
+    return `<div class="${isLast ? "row between" : "statline"}" style="${isLast ? "padding-top:8px" : ""}">
+      <span class="row muted" style="font-size:14px; gap:6px">${miniFlowerSVG(COMPTE_HUE[cat], 1, 9)} ${COMPTE_LABELS[cat]}</span>
+      <span style="font-weight:600; color:${balance < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(balance)}</span>
+    </div>`;
+  }).join("");
   return `
   <div class="card" style="margin-bottom:20px">
     <div class="row between" style="margin-bottom:12px">
-      <div class="eyebrow" style="margin-bottom:0">Épargne</div>
+      <div class="eyebrow" style="margin-bottom:0">${CONTEXT_TITLES[context]}</div>
       <div class="row" style="gap:14px">
-        <button class="link-btn" data-action="open-epargne-panel">Historique</button>
-        <button class="icon-btn" data-action="open-epargne-form" style="font-size:16px; font-weight:700">+</button>
+        <button class="link-btn" data-action="open-epargne-panel" data-ctx="${context}">Historique</button>
+        <button class="icon-btn" data-action="open-epargne-form" data-ctx="${context}" style="font-size:16px; font-weight:700">+</button>
       </div>
     </div>
-    <div class="statline"><span class="row muted" style="font-size:14px; gap:6px">${miniFlowerSVG(265, 1, 9)} Enfants</span><span style="font-weight:600; color:${enfants < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(enfants)}</span></div>
-    <div class="row between" style="padding-top:8px">
-      <span class="row muted" style="font-size:14px; gap:6px">${miniFlowerSVG(10, 1, 9)} Couple</span>
-      <span style="font-weight:600; color:${couple < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(couple)}</span>
-    </div>
+    ${rows}
+    <p class="muted" style="font-size:11px; margin:10px 0 0">Se cumule mois après mois, par versements et retraits ponctuels ou récurrents.</p>
   </div>`;
 }
 
 function epargneFormSheetHTML() {
   if (!state.epargneFormOpen) return "";
+  const cats = CONTEXT_CATS[state.epargneFormContext];
   return `
   <div class="sheet-overlay" data-overlay-close="close-epargne-form">
     <div class="sheet">
       <div class="row between" style="margin-bottom:16px">
-        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Mouvement d'épargne</h2>
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Mouvement — ${CONTEXT_TITLES[state.epargneFormContext]}</h2>
         <button class="icon-btn" data-action="close-epargne-form" style="font-size:20px">✕</button>
       </div>
+      ${cats.length > 1 ? `
       <div class="segmented">
-        <button class="${state.epargneDraft.categorie === "enfants" ? "active-gold" : ""}" style="display:flex; align-items:center; justify-content:center; gap:6px" data-action="set-epargne-cat" data-cat="enfants">${miniFlowerSVG(265, 1, 8)} Enfants</button>
-        <button class="${state.epargneDraft.categorie === "couple" ? "active-gold" : ""}" style="display:flex; align-items:center; justify-content:center; gap:6px" data-action="set-epargne-cat" data-cat="couple">${miniFlowerSVG(10, 1, 8)} Couple</button>
-      </div>
+        ${cats.map((cat) => `<button class="${state.epargneDraft.categorie === cat ? "active-gold" : ""}" style="display:flex; align-items:center; justify-content:center; gap:4px" data-action="set-epargne-cat" data-cat="${cat}">${miniFlowerSVG(COMPTE_HUE[cat], 1, 7)} ${COMPTE_LABELS[cat]}</button>`).join("")}
+      </div>` : ""}
       <div class="segmented">
         <button class="${state.epargneDraft.type === "versement" ? "active-revenu" : ""}" data-action="set-epargne-type" data-type="versement">Versement</button>
         <button class="${state.epargneDraft.type === "retrait" ? "active-charge" : ""}" data-action="set-epargne-type" data-type="retrait">Retrait</button>
       </div>
-      <div class="row" style="gap:12px">
-        <div style="flex:1">
-          <label class="field-label">Montant (€)</label>
-          <input id="f-epargne-amount" inputmode="decimal" placeholder="0" />
-        </div>
-        <div style="flex:1">
-          <label class="field-label">Date</label>
-          <input id="f-epargne-date" type="date" />
-        </div>
+      <div class="segmented">
+        <button class="${state.epargneFreq === "ponctuelle" ? "active-gold" : ""}" data-action="set-epargne-freq" data-freq="ponctuelle">Ponctuel</button>
+        <button class="${state.epargneFreq === "recurrente" ? "active-gold" : ""}" data-action="set-epargne-freq" data-freq="recurrente">Récurrent</button>
       </div>
+      <label class="field-label">Montant (€)</label>
+      <input id="f-epargne-amount" inputmode="decimal" placeholder="0" />
+      ${state.epargneFreq === "ponctuelle" ? `
+      <label class="field-label">Date</label>
+      <input id="f-epargne-date" type="date" />
+      ` : `
+      <label class="field-label">Échéance (jour du mois)</label>
+      <input id="f-epargne-day" inputmode="numeric" placeholder="1-31" />
+      <div class="row" style="gap:12px">
+        <div style="flex:1"><label class="field-label">Date de début</label><input id="f-epargne-startmonth" type="month" /></div>
+        <div style="flex:1"><label class="field-label">Date de fin (optionnelle)</label><input id="f-epargne-endmonth" type="month" /></div>
+      </div>
+      <p class="muted" style="font-size:12px; margin:-4px 0 16px; font-style:italic">Ce mouvement sera répété automatiquement chaque mois sur la période choisie.</p>
+      `}
       <button class="btn-primary" data-action="add-epargne">Ajouter</button>
     </div>
   </div>`;
@@ -434,15 +422,33 @@ function epargneFormSheetHTML() {
 
 function epargnePanelHTML() {
   if (!state.epargnePanelOpen) return "";
-  const mvts = [...state.epargneMouvements].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const cats = CONTEXT_CATS[state.epargnePanelContext];
+  const recurrents = state.epargneRecurrents.filter((r) => cats.includes(r.categorie));
+  const mvts = state.epargneMouvements.filter((m) => cats.includes(m.categorie)).sort((a, b) => (a.date < b.date ? 1 : -1));
+  let recBody;
+  if (recurrents.length === 0) {
+    recBody = `<p class="muted" style="font-size:13px; padding:8px 0; font-style:italic">Aucun mouvement récurrent pour l'instant.</p>`;
+  } else {
+    recBody = recurrents.map((r) => `
+      <div class="entry-row" style="flex-wrap:wrap">
+        <div style="min-width:0; padding-right:8px">
+          <div style="display:flex; align-items:center; gap:6px; font-size:14px">${miniFlowerSVG(COMPTE_HUE[r.categorie], 1, 8)} ${COMPTE_LABELS[r.categorie]}</div>
+          <div class="muted" style="font-size:10px">${r.type === "versement" ? "Versement" : "Retrait"} · échéance le ${r.day} · depuis ${monthLabelOf(r.startMonth).full}${r.endMonth ? ` · jusqu'à ${monthLabelOf(r.endMonth).full}` : ""}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; color:${r.type === "versement" ? "var(--stem)" : "var(--danger)"}">${r.type === "versement" ? "+" : "−"}${fmtEUR(r.amount)}</span>
+          <button class="icon-btn" data-action="remove-epargne-recurrent" data-id="${r.id}">🗑</button>
+        </div>
+      </div>`).join("");
+  }
   let body;
   if (mvts.length === 0) {
-    body = `<p class="muted" style="font-size:14px; padding:16px 0; text-align:center; font-style:italic">Aucun mouvement pour l'instant.</p>`;
+    body = `<p class="muted" style="font-size:14px; padding:16px 0; text-align:center; font-style:italic">Aucun mouvement ponctuel pour l'instant.</p>`;
   } else {
     body = mvts.map((m) => `
       <div class="entry-row">
         <div style="min-width:0; padding-right:8px">
-          <div style="display:flex; align-items:center; gap:6px; font-size:14px">${m.categorie === "enfants" ? miniFlowerSVG(265, 1, 8) + " Enfants" : miniFlowerSVG(10, 1, 8) + " Couple"}</div>
+          <div style="display:flex; align-items:center; gap:6px; font-size:14px">${miniFlowerSVG(COMPTE_HUE[m.categorie], 1, 8)} ${COMPTE_LABELS[m.categorie]}</div>
           <div class="muted" style="font-size:10px">${m.type === "versement" ? "Versement" : "Retrait"} · ${m.date.slice(8, 10)}/${m.date.slice(5, 7)}/${m.date.slice(0, 4)}</div>
         </div>
         <div class="row" style="gap:8px; flex-shrink:0">
@@ -455,9 +461,12 @@ function epargnePanelHTML() {
   <div class="sheet-overlay" data-overlay-close="close-epargne-panel">
     <div class="sheet">
       <div class="row between" style="margin-bottom:16px">
-        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Historique d'épargne</h2>
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Historique — ${CONTEXT_TITLES[state.epargnePanelContext]}</h2>
         <button class="icon-btn" data-action="close-epargne-panel" style="font-size:20px">✕</button>
       </div>
+      <div class="eyebrow">Récurrents</div>
+      ${recBody}
+      <div class="eyebrow" style="margin-top:14px">Ponctuels</div>
       ${body}
     </div>
   </div>`;
@@ -548,9 +557,11 @@ function formSheetHTML() {
         </div>
       </div>
       ${state.freq === "recurrente" ? `
+      <label class="field-label">Date de début</label>
+      <input id="f-startmonth" type="month" />
       <label class="field-label">Date de fin (optionnelle)</label>
       <input id="f-endmonth" type="month" />
-      <p class="muted" style="font-size:12px; margin:-4px 0 16px; font-style:italic">Cette écriture sera ajoutée automatiquement chaque mois à partir de ${full}, jusqu'à la date de fin si tu en indiques une.</p>` : ""}
+      <p class="muted" style="font-size:12px; margin:-4px 0 16px; font-style:italic">Cette écriture sera ajoutée automatiquement chaque mois, jusqu'à la date de fin si tu en indiques une.</p>` : ""}
       <button class="btn-primary" data-action="add-entry">Ajouter</button>
     </div>
   </div>`;
@@ -572,9 +583,11 @@ function recurringSheetHTML() {
           <span style="font-size:14px; font-weight:500; color:${r.type === "revenu" ? "var(--stem)" : "var(--danger)"}">${r.type === "revenu" ? "+" : "−"}${fmtEUR(r.amount)}</span>
           <button class="icon-btn" data-action="remove-recurring" data-id="${r.id}">🗑</button>
         </div>
-        <div class="row" style="gap:6px; width:100%; margin-top:6px">
+        <div class="row" style="gap:6px; width:100%; margin-top:6px; flex-wrap:wrap">
+          <label class="field-label" style="margin:0; flex-shrink:0">Début :</label>
+          <input type="month" class="recurring-start-input" data-id="${r.id}" value="${r.startMonth}" style="margin-bottom:0; padding:5px 8px; font-size:12px; width:auto" />
           <label class="field-label" style="margin:0; flex-shrink:0">Fin :</label>
-          <input type="month" class="recurring-end-input" data-id="${r.id}" value="${r.endMonth || ""}" style="margin-bottom:0; padding:5px 8px; font-size:12px" />
+          <input type="month" class="recurring-end-input" data-id="${r.id}" value="${r.endMonth || ""}" style="margin-bottom:0; padding:5px 8px; font-size:12px; width:auto" />
           ${r.endMonth ? `<button class="icon-btn" data-action="clear-end-month" data-id="${r.id}" style="font-size:11px; text-decoration:underline">retirer</button>` : ""}
         </div>
       </div>`).join("");
@@ -598,15 +611,15 @@ function render() {
     return;
   }
   const monthData = computeMonth(state.cursor, state.oneOff, state.recurring);
-  monthData.report = computeCarryover(state.cursor, state.oneOff, state.recurring);
+  monthData.report = getReportManuel(state.cursor);
   root.innerHTML = `
     <div class="wrap">
       ${headerHTML()}
       ${monthNavHTML()}
       ${monthStripHTML()}
       ${heroCardHTML(monthData)}
-      ${budgetCourseCardHTML(monthData)}
-      ${epargneCardHTML()}
+      ${comptesCardHTML("epargne")}
+      ${comptesCardHTML("courses")}
       ${categoryCardHTML(monthData)}
       ${entriesCardHTML(monthData)}
     </div>
@@ -623,12 +636,16 @@ function render() {
     const a = document.getElementById("f-amount"); if (a) a.value = state.draft.amount;
     const d = document.getElementById("f-date"); if (d) d.value = state.draft.date;
     const day = document.getElementById("f-day"); if (day) day.value = state.draft.day;
+    const startmonth = document.getElementById("f-startmonth"); if (startmonth) startmonth.value = state.draft.startMonth || state.cursor;
     const endmonth = document.getElementById("f-endmonth"); if (endmonth) endmonth.value = state.draft.endMonth || "";
     const cat = document.getElementById("f-cat"); if (cat) cat.value = state.draft.category || cat.value;
   }
   if (state.epargneFormOpen) {
     const ea = document.getElementById("f-epargne-amount"); if (ea) ea.value = state.epargneDraft.amount;
     const ed = document.getElementById("f-epargne-date"); if (ed) ed.value = state.epargneDraft.date;
+    const eday = document.getElementById("f-epargne-day"); if (eday) eday.value = state.epargneDraft.day;
+    const esm = document.getElementById("f-epargne-startmonth"); if (esm) esm.value = state.epargneDraft.startMonth || state.cursor;
+    const eem = document.getElementById("f-epargne-endmonth"); if (eem) eem.value = state.epargneDraft.endMonth || "";
   }
 }
 
@@ -638,6 +655,7 @@ function captureDraft() {
   const a = document.getElementById("f-amount"); if (a) state.draft.amount = a.value;
   const d = document.getElementById("f-date"); if (d) state.draft.date = d.value;
   const day = document.getElementById("f-day"); if (day) state.draft.day = day.value;
+  const startmonth = document.getElementById("f-startmonth"); if (startmonth) state.draft.startMonth = startmonth.value;
   const endmonth = document.getElementById("f-endmonth"); if (endmonth) state.draft.endMonth = endmonth.value;
   const cat = document.getElementById("f-cat"); if (cat) state.draft.category = cat.value;
 }
@@ -645,13 +663,16 @@ function captureEpargneDraft() {
   if (!state.epargneFormOpen) return;
   const ea = document.getElementById("f-epargne-amount"); if (ea) state.epargneDraft.amount = ea.value;
   const ed = document.getElementById("f-epargne-date"); if (ed) state.epargneDraft.date = ed.value;
+  const eday = document.getElementById("f-epargne-day"); if (eday) state.epargneDraft.day = eday.value;
+  const esm = document.getElementById("f-epargne-startmonth"); if (esm) state.epargneDraft.startMonth = esm.value;
+  const eem = document.getElementById("f-epargne-endmonth"); if (eem) state.epargneDraft.endMonth = eem.value;
 }
 
 function update() { captureDraft(); render(); }
 
 // ---------- actions ----------
 function exportData() {
-  const payload = { exportedAt: new Date().toISOString(), entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, budgets: state.budgets };
+  const payload = { exportedAt: new Date().toISOString(), entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, epargneRecurrents: state.epargneRecurrents, reportManuel: state.reportManuel };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -670,17 +691,16 @@ function handleImportFile(file) {
       const importedEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
       const importedRecurring = Array.isArray(parsed.recurring) ? parsed.recurring : [];
       const importedEpargne = Array.isArray(parsed.epargneMouvements) ? parsed.epargneMouvements : [];
+      const importedEpargneRec = Array.isArray(parsed.epargneRecurrents) ? parsed.epargneRecurrents : [];
       const existingIds = new Set(state.oneOff.map((x) => x.id));
       const existingRecIds = new Set(state.recurring.map((x) => x.id));
       const existingEpargneIds = new Set(state.epargneMouvements.map((x) => x.id));
+      const existingEpargneRecIds = new Set(state.epargneRecurrents.map((x) => x.id));
       state.oneOff = [...state.oneOff, ...importedEntries.filter((x) => x && x.id && !existingIds.has(x.id))];
       state.recurring = [...state.recurring, ...importedRecurring.filter((x) => x && x.id && !existingRecIds.has(x.id))];
       state.epargneMouvements = [...state.epargneMouvements, ...importedEpargne.filter((x) => x && x.id && !existingEpargneIds.has(x.id))];
-      if (parsed.budgets) {
-        Object.keys(parsed.budgets).forEach((cat) => {
-          state.budgets[cat] = { ...(state.budgets[cat] || {}), ...parsed.budgets[cat] };
-        });
-      }
+      state.epargneRecurrents = [...state.epargneRecurrents, ...importedEpargneRec.filter((x) => x && x.id && !existingEpargneRecIds.has(x.id))];
+      if (parsed.reportManuel) state.reportManuel = { ...state.reportManuel, ...parsed.reportManuel };
       persist();
       state.error = null;
     } catch (err) {
@@ -712,7 +732,7 @@ document.addEventListener("click", (e) => {
     case "goto-month": state.cursor = btn.getAttribute("data-cursor"); update(); break;
     case "open-form":
       state.formOpen = true;
-      state.draft = { label: "", amount: "", date: todayISO(), day: "1", category: state.formType === "revenu" ? REVENU_CATS[0] : CHARGE_CATS[0] };
+      state.draft = { label: "", amount: "", date: todayISO(), day: "1", startMonth: state.cursor, endMonth: "", category: state.formType === "revenu" ? REVENU_CATS[0] : CHARGE_CATS[0] };
       update();
       break;
     case "close-form": state.formOpen = false; update(); break;
@@ -738,7 +758,7 @@ document.addEventListener("click", (e) => {
       if (state.freq === "ponctuelle") {
         state.oneOff.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, date: state.draft.date || todayISO() });
       } else {
-        state.recurring.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, day: Math.max(1, Math.min(31, parseInt(state.draft.day, 10) || 1)), startMonth: state.cursor, endMonth: state.draft.endMonth || null });
+        state.recurring.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, day: Math.max(1, Math.min(31, parseInt(state.draft.day, 10) || 1)), startMonth: state.draft.startMonth || state.cursor, endMonth: state.draft.endMonth || null });
       }
       persist();
       state.formOpen = false;
@@ -767,13 +787,21 @@ document.addEventListener("click", (e) => {
       update();
       break;
     }
-    case "open-epargne-form":
+    case "open-epargne-form": {
+      const ctx = btn.getAttribute("data-ctx") || "epargne";
       state.epargneFormOpen = true;
-      state.epargneDraft = { categorie: "enfants", type: "versement", amount: "", date: todayISO() };
+      state.epargneFreq = "ponctuelle";
+      state.epargneFormContext = ctx;
+      state.epargneDraft = { categorie: CONTEXT_CATS[ctx][0], type: "versement", amount: "", date: todayISO(), day: "1", startMonth: state.cursor, endMonth: "" };
       update();
       break;
+    }
     case "close-epargne-form": state.epargneFormOpen = false; update(); break;
-    case "open-epargne-panel": state.epargnePanelOpen = true; update(); break;
+    case "open-epargne-panel":
+      state.epargnePanelContext = btn.getAttribute("data-ctx") || "epargne";
+      state.epargnePanelOpen = true;
+      update();
+      break;
     case "close-epargne-panel": state.epargnePanelOpen = false; update(); break;
     case "set-epargne-cat": {
       captureEpargneDraft();
@@ -787,14 +815,28 @@ document.addEventListener("click", (e) => {
       render();
       break;
     }
+    case "set-epargne-freq": {
+      captureEpargneDraft();
+      state.epargneFreq = btn.getAttribute("data-freq");
+      render();
+      break;
+    }
     case "add-epargne": {
       captureEpargneDraft();
       const amt = parseFloat(String(state.epargneDraft.amount).replace(",", "."));
       if (!amt || amt <= 0) return;
-      state.epargneMouvements.push({
-        id: uid(), categorie: state.epargneDraft.categorie, type: state.epargneDraft.type,
-        amount: Math.round(amt * 100) / 100, date: state.epargneDraft.date || todayISO(),
-      });
+      if (state.epargneFreq === "ponctuelle") {
+        state.epargneMouvements.push({
+          id: uid(), categorie: state.epargneDraft.categorie, type: state.epargneDraft.type,
+          amount: Math.round(amt * 100) / 100, date: state.epargneDraft.date || todayISO(),
+        });
+      } else {
+        state.epargneRecurrents.push({
+          id: uid(), categorie: state.epargneDraft.categorie, type: state.epargneDraft.type,
+          amount: Math.round(amt * 100) / 100, day: Math.max(1, Math.min(31, parseInt(state.epargneDraft.day, 10) || 1)),
+          startMonth: state.epargneDraft.startMonth || state.cursor, endMonth: state.epargneDraft.endMonth || null,
+        });
+      }
       persist();
       state.epargneFormOpen = false;
       update();
@@ -803,6 +845,13 @@ document.addEventListener("click", (e) => {
     case "remove-epargne": {
       const id = btn.getAttribute("data-id");
       state.epargneMouvements = state.epargneMouvements.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "remove-epargne-recurrent": {
+      const id = btn.getAttribute("data-id");
+      state.epargneRecurrents = state.epargneRecurrents.filter((x) => x.id !== id);
       persist();
       update();
       break;
@@ -827,8 +876,16 @@ document.addEventListener("change", (e) => {
     e.target.value = "";
     return;
   }
-  if (e.target && e.target.id === "budget-alim") {
-    setBudget("Alimentation", state.cursor, parseFloat(e.target.value) || 0);
+  if (e.target && e.target.id === "report-manuel") {
+    state.reportManuel[state.cursor] = parseFloat(e.target.value) || 0;
+    persist();
+    update();
+    return;
+  }
+  if (e.target && e.target.classList && e.target.classList.contains("recurring-start-input")) {
+    const id = e.target.getAttribute("data-id");
+    const r = state.recurring.find((x) => x.id === id);
+    if (r && e.target.value) r.startMonth = e.target.value;
     persist();
     update();
     return;
