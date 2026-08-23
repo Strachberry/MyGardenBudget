@@ -84,7 +84,12 @@ function monthLabelOf(cursor) {
   return { full: `${MOIS_FR[m - 1]} ${y}`, abr: MOIS_ABR[m - 1], y, m };
 }
 function clamp01(x) { return Math.max(0, Math.min(1, x)); }
-function healthFactor(pct) { return clamp01((pct + 10) / 40); }
+// santé de 0 (fané) à 1 (pleine floraison) — objectif : charges <= 50% des revenus
+function healthFactor(tauxCharges, hasRevenu) {
+  if (!hasRevenu) return 0.12;
+  if (tauxCharges <= 50) return 1;
+  return clamp01((100 - tauxCharges) / 50);
+}
 function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 
 function computeMonth(cursor, oneOff, recurring) {
@@ -102,6 +107,26 @@ function computeMonth(cursor, oneOff, recurring) {
   const tauxEpargne = revenus > 0 ? (epargne / revenus) * 100 : charges > 0 ? -100 : 0;
   const tauxCharges = revenus > 0 ? (charges / revenus) * 100 : 0;
   return { all, revenus, charges, epargne, tauxEpargne, tauxCharges };
+}
+
+function earliestMonth(oneOff, recurring) {
+  const months = [];
+  oneOff.forEach((e) => months.push(monthKey(e.date)));
+  recurring.forEach((r) => months.push(r.startMonth));
+  if (months.length === 0) return null;
+  return months.sort()[0];
+}
+// solde reporté automatiquement : somme de l'épargne (ou du déficit) de tous les mois précédents
+function computeCarryover(cursor, oneOff, recurring) {
+  const earliest = earliestMonth(oneOff, recurring);
+  if (!earliest || earliest >= cursor) return 0;
+  let m = earliest, total = 0, guard = 0;
+  while (m < cursor && guard < 600) {
+    total += computeMonth(m, oneOff, recurring).epargne;
+    m = addMonths(m, 1);
+    guard++;
+  }
+  return total;
 }
 
 // ---------- SVG builders ----------
@@ -127,29 +152,67 @@ function orchidLipSVG(cx, cy, health) {
     <circle cx="0" cy="25" r="1.3" fill="${dot}" opacity="${dotOp}" />
   </g>`;
 }
-function heroFlowerSVG(pct) {
-  const health = healthFactor(pct);
+function heroFlowerSVG(monthData) {
+  const health = healthFactor(monthData.tauxCharges, monthData.revenus > 0);
   const cx = 110, cy = 112;
-  const layout = [
-    { angle: 0, wide: false, hue: 300 },
-    { angle: -52, wide: true, hue: 315 },
-    { angle: 52, wide: true, hue: 315 },
-    { angle: -132, wide: false, hue: 285 },
-    { angle: 132, wide: false, hue: 285 },
-  ];
-  let petals = layout.map((p) => orchidPetalSVG(p.angle, cx, cy, health, p.wide, p.hue)).join("");
-  const stemColor = `hsl(100 ${10 + health * 45}% ${42 - health * 8}%)`;
-  const columnColor = `hsl(45 ${25 + health * 55}% ${72 - health * 12}%)`;
-  const tone = pct < 0 ? "var(--danger)" : pct < 15 ? "var(--gold)" : "var(--stem)";
-  return `<svg width="220" height="230" viewBox="0 0 220 230">
-    <path d="M${cx},${cy + 66} C${cx},${cy + 36} ${cx},${cy + 16} ${cx},${cy + 6}" stroke="${stemColor}" stroke-width="4" fill="none" stroke-linecap="round" />
+  const tone = health < 0.4 ? "var(--danger)" : health < 0.7 ? "var(--gold)" : "var(--stem)";
+
+  // couleur/robustesse de la tige et des feuilles : progresse avec la santé, dès la graine
+  const stemColor = `hsl(100 ${8 + health * 47}% ${38 - health * 6}%)`;
+  const leaves = `
     <path d="M${cx},${cy + 46} C${cx - 20},${cy + 40} ${cx - 26},${cy + 28} ${cx - 18},${cy + 20} C${cx - 8},${cy + 28} ${cx - 4},${cy + 38} ${cx},${cy + 46}" fill="${stemColor}" opacity="0.85" />
-    <path d="M${cx},${cy + 54} C${cx + 20},${cy + 48} ${cx + 26},${cy + 36} ${cx + 18},${cy + 28} C${cx + 8},${cy + 36} ${cx + 4},${cy + 46} ${cx},${cy + 54}" fill="${stemColor}" opacity="0.85" />
-    ${petals}
-    ${orchidLipSVG(cx, cy, health)}
-    <ellipse cx="${cx}" cy="${cy + 2}" rx="${6 + health * 2}" ry="${8 + health * 2}" fill="${columnColor}" />
-    <text x="${cx}" y="${cy + 92}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--ink)">${pct >= 0 ? "+" : ""}${pct.toFixed(0)}%</text>
-    <text x="${cx}" y="230" text-anchor="middle" font-size="10" letter-spacing="1" fill="${tone}">TAUX D'ÉPARGNE</text>
+    <path d="M${cx},${cy + 54} C${cx + 20},${cy + 48} ${cx + 26},${cy + 36} ${cx + 18},${cy + 28} C${cx + 8},${cy + 36} ${cx + 4},${cy + 46} ${cx},${cy + 54}" fill="${stemColor}" opacity="0.85" />`;
+  const stem = `<path d="M${cx},${cy + 66} C${cx},${cy + 36} ${cx},${cy + 16} ${cx},${cy + 6}" stroke="${stemColor}" stroke-width="4" fill="none" stroke-linecap="round" />`;
+
+  let top = "";
+  if (health < 0.15) {
+    // graine / pousse : rien qu'un petit bourgeon fermé, terne
+    const p = clamp01(health / 0.15);
+    const budColor = `hsl(95 ${10 + p * 20}% ${30 + p * 10}%)`;
+    top = `<ellipse cx="${cx}" cy="${cy + 4}" rx="${4 + p * 3}" ry="${7 + p * 4}" fill="${budColor}" />`;
+  } else if (health < 0.45) {
+    // bouton : les 3 sépales se forment, encore fermés, pas de lèvre
+    const p = clamp01((health - 0.15) / 0.3);
+    const sepals = [
+      { angle: 0, hue: 100 + p * 190 },
+      { angle: -132, hue: 100 + p * 175 },
+      { angle: 132, hue: 100 + p * 175 },
+    ];
+    top = sepals.map((s) => orchidPetalSVG(s.angle, cx, cy, 0.15 + p * 0.35, false, s.hue)).join("");
+  } else if (health < 0.75) {
+    // pré-floraison : les 2 pétales larges apparaissent, toujours pas de lèvre
+    const p = clamp01((health - 0.45) / 0.3);
+    const layout = [
+      { angle: 0, wide: false, hue: 300 },
+      { angle: -52, wide: true, hue: 315 },
+      { angle: 52, wide: true, hue: 315 },
+      { angle: -132, wide: false, hue: 285 },
+      { angle: 132, wide: false, hue: 285 },
+    ];
+    top = layout.map((pt) => orchidPetalSVG(pt.angle, cx, cy, 0.4 + p * 0.3, pt.wide, pt.hue)).join("");
+  } else {
+    // fleur épanouie : tout, y compris la lèvre caractéristique
+    const p = clamp01((health - 0.75) / 0.25);
+    const layout = [
+      { angle: 0, wide: false, hue: 300 },
+      { angle: -52, wide: true, hue: 315 },
+      { angle: 52, wide: true, hue: 315 },
+      { angle: -132, wide: false, hue: 285 },
+      { angle: 132, wide: false, hue: 285 },
+    ];
+    const petalHealth = 0.7 + p * 0.3;
+    const columnColor = `hsl(45 ${25 + petalHealth * 55}% ${72 - petalHealth * 12}%)`;
+    top = layout.map((pt) => orchidPetalSVG(pt.angle, cx, cy, petalHealth, pt.wide, pt.hue)).join("")
+      + orchidLipSVG(cx, cy, petalHealth)
+      + `<ellipse cx="${cx}" cy="${cy + 2}" rx="${6 + petalHealth * 2}" ry="${8 + petalHealth * 2}" fill="${columnColor}" />`;
+  }
+
+  return `<svg width="220" height="230" viewBox="0 0 220 230">
+    ${stem}
+    ${leaves}
+    ${top}
+    <text x="${cx}" y="${cy + 92}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--ink)">${monthData.tauxCharges.toFixed(0)}%</text>
+    <text x="${cx}" y="230" text-anchor="middle" font-size="10" letter-spacing="1" fill="${tone}">ÉQUILIBRE BUDGÉTAIRE</text>
   </svg>`;
 }
 function miniFlowerSVG(hue, health, size) {
@@ -162,8 +225,8 @@ function miniFlowerSVG(hue, health, size) {
   });
   return `<svg width="${size * 2}" height="${size * 2}" viewBox="0 0 ${c * 2} ${c * 2}" style="flex-shrink:0">${petals}<circle cx="${c}" cy="${c}" r="${size * 0.28}" fill="var(--gold)" /></svg>`;
 }
-function budSVG(pct, hasData) {
-  const health = healthFactor(pct);
+function budSVG(tauxCharges, hasData, hasRevenu) {
+  const health = healthFactor(tauxCharges, hasRevenu);
   const color = hasData ? `hsl(330 ${20 + health * 60}% ${72 - health * 14}%)` : "var(--rule)";
   const r = hasData ? 5 + health * 2 : 3;
   return `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="${r}" fill="${color}" /></svg>`;
@@ -171,13 +234,28 @@ function budSVG(pct, hasData) {
 
 // ---------- state ----------
 let state = {
-  oneOff: [], recurring: [], loading: true, error: null,
+  oneOff: [], recurring: [], epargneMouvements: [], budgets: {}, loading: true, error: null,
   cursor: todayISO().slice(0, 7),
-  formOpen: false, recurringPanelOpen: false,
+  formOpen: false, recurringPanelOpen: false, epargneFormOpen: false, epargnePanelOpen: false,
   formType: "charge", freq: "ponctuelle",
   saving: false,
   draft: { label: "", amount: "", date: todayISO(), day: "1" },
+  epargneDraft: { categorie: "enfants", type: "versement", amount: "", date: todayISO() },
 };
+
+// budget prévisionnel par catégorie : { "Alimentation": { "2026-08": 400 } }
+// reconduit automatiquement d'un mois sur l'autre (dernière valeur connue),
+// mais ajustable pour un mois précis sans toucher aux autres.
+function getBudget(cat, cursor) {
+  const map = state.budgets[cat] || {};
+  if (cursor in map) return map[cursor];
+  const priorKeys = Object.keys(map).filter((k) => k < cursor).sort();
+  return priorKeys.length ? map[priorKeys[priorKeys.length - 1]] : 0;
+}
+function setBudget(cat, cursor, value) {
+  if (!state.budgets[cat]) state.budgets[cat] = {};
+  state.budgets[cat][cursor] = value;
+}
 
 function loadData() {
   try {
@@ -186,13 +264,15 @@ function loadData() {
       const parsed = JSON.parse(res.value);
       state.oneOff = parsed.entries || [];
       state.recurring = parsed.recurring || [];
+      state.epargneMouvements = parsed.epargneMouvements || [];
+      state.budgets = parsed.budgets || {};
     }
   } catch (e) {}
   state.loading = false;
 }
 function persist() {
   state.saving = true;
-  try { storage.set("finance-data", JSON.stringify({ entries: state.oneOff, recurring: state.recurring })); }
+  try { storage.set("finance-data", JSON.stringify({ entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, budgets: state.budgets })); }
   catch (e) { state.error = "Impossible d'enregistrer sur cet appareil."; }
   state.saving = false;
 }
@@ -249,26 +329,137 @@ function monthStripHTML() {
     const active = c === state.cursor;
     chips += `<button class="month-chip ${active ? "active" : ""}" data-action="goto-month" data-cursor="${c}">
       <span class="muted" style="font-size:10px; text-transform:uppercase">${lbl.abr}</span>
-      ${budSVG(d.tauxEpargne, d.all.length > 0)}
+      ${budSVG(d.tauxCharges, d.all.length > 0, d.revenus > 0)}
     </button>`;
   }
   return `<div class="month-strip">${chips}</div>`;
 }
 
 function heroCardHTML(monthData) {
+  const health = healthFactor(monthData.tauxCharges, monthData.revenus > 0);
+  const disponible = monthData.report + monthData.epargne;
   return `
   <div class="card" style="display:flex; flex-direction:column; align-items:center; margin-bottom:20px">
-    ${heroFlowerSVG(monthData.tauxEpargne)}
+    ${heroFlowerSVG(monthData)}
     <div style="width:100%; margin-top:8px">
       <div class="statline"><span class="muted" style="font-size:14px">Revenus</span><span style="color:var(--stem); font-weight:600">${fmtEUR(monthData.revenus)}</span></div>
       <div class="statline"><span class="muted" style="font-size:14px">Charges</span><span style="color:var(--danger); font-weight:600">${fmtEUR(monthData.charges)}</span></div>
-      <div class="statline"><span class="muted" style="font-size:14px">Charges / Revenus</span><span class="muted" style="font-weight:600">${monthData.tauxCharges.toFixed(0)}%</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">Report du mois précédent</span><span style="font-weight:600; color:${monthData.report < 0 ? "var(--danger)" : "var(--ink)"}">${fmtEUR(monthData.report)}</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">Épargne du mois</span><span style="font-weight:600; color:${monthData.epargne < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(monthData.epargne)}</span></div>
       <div class="row between" style="padding-top:8px">
-        <span class="muted" style="font-size:14px">Épargne du mois</span>
-        <span style="font-size:18px; font-weight:700; color:${monthData.epargne < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(monthData.epargne)}</span>
+        <span class="muted" style="font-size:14px">Disponible cumulé</span>
+        <span style="font-size:18px; font-weight:700; color:${disponible < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(disponible)}</span>
       </div>
     </div>
-    ${monthData.tauxEpargne < 0 ? `<p style="font-size:12px; margin-top:12px; text-align:center; color:var(--danger)">Les fleurs sont fanées ce mois-ci — les charges dépassent les revenus.</p>` : ""}
+    ${health < 0.4 ? `<p style="font-size:12px; margin-top:12px; text-align:center; color:var(--danger)">La plante peine ce mois-ci — les charges dépassent l'objectif de 50% des revenus.</p>` : ""}
+  </div>`;
+}
+
+function budgetCourseCardHTML(monthData) {
+  const cat = "Alimentation";
+  const budget = getBudget(cat, state.cursor);
+  const depense = monthData.all.filter((e) => e.type === "charge" && e.category === cat).reduce((s, e) => s + e.amount, 0);
+  const disponible = budget - depense;
+  const progress = budget > 0 ? clamp01(depense / budget) * 100 : 0;
+  return `
+  <div class="card" style="margin-bottom:20px">
+    <div class="row between" style="margin-bottom:12px">
+      <div class="eyebrow" style="margin-bottom:0">Budget courses (Alimentation)</div>
+    </div>
+    <label class="field-label">Budget prévu ce mois (€)</label>
+    <input id="budget-alim" type="number" inputmode="decimal" min="0" value="${budget || ""}" placeholder="0" style="margin-bottom:14px" />
+    <div class="statline"><span class="muted" style="font-size:14px">Dépensé</span><span style="font-weight:600; color:var(--danger)">${fmtEUR(depense)}</span></div>
+    <div class="row between" style="padding-top:8px; margin-bottom:${budget > 0 ? "10px" : "0"}">
+      <span class="muted" style="font-size:14px">Disponible</span>
+      <span style="font-size:18px; font-weight:700; color:${disponible < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(disponible)}</span>
+    </div>
+    ${budget > 0 ? `<div class="bar-track"><div class="bar-fill" style="width:${progress}%; background:${disponible < 0 ? "var(--danger)" : "var(--stem)"}"></div></div>` : `<p class="muted" style="font-size:11px; margin:0">Renseigne un budget prévu pour suivre ce qu'il te reste pour les courses et achats divers.</p>`}
+  </div>`;
+}
+
+function epargneCardHTML() {
+  const balanceOf = (cat) => state.epargneMouvements
+    .filter((m) => m.categorie === cat)
+    .reduce((s, m) => s + (m.type === "versement" ? m.amount : -m.amount), 0);
+  const enfants = balanceOf("enfants");
+  const couple = balanceOf("couple");
+  return `
+  <div class="card" style="margin-bottom:20px">
+    <div class="row between" style="margin-bottom:12px">
+      <div class="eyebrow" style="margin-bottom:0">Épargne</div>
+      <div class="row" style="gap:14px">
+        <button class="link-btn" data-action="open-epargne-panel">Historique</button>
+        <button class="icon-btn" data-action="open-epargne-form" style="font-size:16px; font-weight:700">+</button>
+      </div>
+    </div>
+    <div class="statline"><span class="row muted" style="font-size:14px; gap:6px">${miniFlowerSVG(265, 1, 9)} Enfants</span><span style="font-weight:600; color:${enfants < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(enfants)}</span></div>
+    <div class="row between" style="padding-top:8px">
+      <span class="row muted" style="font-size:14px; gap:6px">${miniFlowerSVG(10, 1, 9)} Couple</span>
+      <span style="font-weight:600; color:${couple < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(couple)}</span>
+    </div>
+  </div>`;
+}
+
+function epargneFormSheetHTML() {
+  if (!state.epargneFormOpen) return "";
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-epargne-form">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Mouvement d'épargne</h2>
+        <button class="icon-btn" data-action="close-epargne-form" style="font-size:20px">✕</button>
+      </div>
+      <div class="segmented">
+        <button class="${state.epargneDraft.categorie === "enfants" ? "active-gold" : ""}" style="display:flex; align-items:center; justify-content:center; gap:6px" data-action="set-epargne-cat" data-cat="enfants">${miniFlowerSVG(265, 1, 8)} Enfants</button>
+        <button class="${state.epargneDraft.categorie === "couple" ? "active-gold" : ""}" style="display:flex; align-items:center; justify-content:center; gap:6px" data-action="set-epargne-cat" data-cat="couple">${miniFlowerSVG(10, 1, 8)} Couple</button>
+      </div>
+      <div class="segmented">
+        <button class="${state.epargneDraft.type === "versement" ? "active-revenu" : ""}" data-action="set-epargne-type" data-type="versement">Versement</button>
+        <button class="${state.epargneDraft.type === "retrait" ? "active-charge" : ""}" data-action="set-epargne-type" data-type="retrait">Retrait</button>
+      </div>
+      <div class="row" style="gap:12px">
+        <div style="flex:1">
+          <label class="field-label">Montant (€)</label>
+          <input id="f-epargne-amount" inputmode="decimal" placeholder="0" />
+        </div>
+        <div style="flex:1">
+          <label class="field-label">Date</label>
+          <input id="f-epargne-date" type="date" />
+        </div>
+      </div>
+      <button class="btn-primary" data-action="add-epargne">Ajouter</button>
+    </div>
+  </div>`;
+}
+
+function epargnePanelHTML() {
+  if (!state.epargnePanelOpen) return "";
+  const mvts = [...state.epargneMouvements].sort((a, b) => (a.date < b.date ? 1 : -1));
+  let body;
+  if (mvts.length === 0) {
+    body = `<p class="muted" style="font-size:14px; padding:16px 0; text-align:center; font-style:italic">Aucun mouvement pour l'instant.</p>`;
+  } else {
+    body = mvts.map((m) => `
+      <div class="entry-row">
+        <div style="min-width:0; padding-right:8px">
+          <div style="display:flex; align-items:center; gap:6px; font-size:14px">${m.categorie === "enfants" ? miniFlowerSVG(265, 1, 8) + " Enfants" : miniFlowerSVG(10, 1, 8) + " Couple"}</div>
+          <div class="muted" style="font-size:10px">${m.type === "versement" ? "Versement" : "Retrait"} · ${m.date.slice(8, 10)}/${m.date.slice(5, 7)}/${m.date.slice(0, 4)}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; color:${m.type === "versement" ? "var(--stem)" : "var(--danger)"}">${m.type === "versement" ? "+" : "−"}${fmtEUR(m.amount)}</span>
+          <button class="icon-btn" data-action="remove-epargne" data-id="${m.id}">🗑</button>
+        </div>
+      </div>`).join("");
+  }
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-epargne-panel">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Historique d'épargne</h2>
+        <button class="icon-btn" data-action="close-epargne-panel" style="font-size:20px">✕</button>
+      </div>
+      ${body}
+    </div>
   </div>`;
 }
 
@@ -278,7 +469,7 @@ function categoryCardHTML(monthData) {
   const byCategory = Object.entries(map).sort((a, b) => b[1] - a[1]);
   if (byCategory.length === 0) return "";
   const maxCat = byCategory[0][1];
-  const health = healthFactor(monthData.tauxEpargne);
+  const health = healthFactor(monthData.tauxCharges, monthData.revenus > 0);
   let rows = "";
   byCategory.forEach(([cat, amt]) => {
     const hue = CAT_HUE[cat] || 0;
@@ -356,7 +547,10 @@ function formSheetHTML() {
             : `<label class="field-label">Échéance (jour)</label><input id="f-day" inputmode="numeric" placeholder="1-31" />`}
         </div>
       </div>
-      ${state.freq === "recurrente" ? `<p class="muted" style="font-size:12px; margin:-4px 0 16px; font-style:italic">Cette écriture sera ajoutée automatiquement chaque mois à partir de ${full}.</p>` : ""}
+      ${state.freq === "recurrente" ? `
+      <label class="field-label">Date de fin (optionnelle)</label>
+      <input id="f-endmonth" type="month" />
+      <p class="muted" style="font-size:12px; margin:-4px 0 16px; font-style:italic">Cette écriture sera ajoutée automatiquement chaque mois à partir de ${full}, jusqu'à la date de fin si tu en indiques une.</p>` : ""}
       <button class="btn-primary" data-action="add-entry">Ajouter</button>
     </div>
   </div>`;
@@ -369,14 +563,19 @@ function recurringSheetHTML() {
     body = `<p class="muted" style="font-size:14px; padding:16px 0; text-align:center; font-style:italic">Aucune charge ou revenu mensuel pour l'instant. Ajoute-en un via le bouton "+" en choisissant "Mensuelle".</p>`;
   } else {
     body = state.recurring.map((r) => `
-      <div class="entry-row">
+      <div class="entry-row" style="flex-wrap:wrap">
         <div style="min-width:0; padding-right:8px">
           <div style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${esc(r.label)}</div>
-          <div class="muted" style="font-size:10px">${esc(r.category)} · échéance le ${r.day} · depuis ${monthLabelOf(r.startMonth).full}</div>
+          <div class="muted" style="font-size:10px">${esc(r.category)} · échéance le ${r.day} · depuis ${monthLabelOf(r.startMonth).full}${r.endMonth ? ` · jusqu'à ${monthLabelOf(r.endMonth).full}` : ""}</div>
         </div>
         <div class="row" style="gap:8px; flex-shrink:0">
           <span style="font-size:14px; font-weight:500; color:${r.type === "revenu" ? "var(--stem)" : "var(--danger)"}">${r.type === "revenu" ? "+" : "−"}${fmtEUR(r.amount)}</span>
           <button class="icon-btn" data-action="remove-recurring" data-id="${r.id}">🗑</button>
+        </div>
+        <div class="row" style="gap:6px; width:100%; margin-top:6px">
+          <label class="field-label" style="margin:0; flex-shrink:0">Fin :</label>
+          <input type="month" class="recurring-end-input" data-id="${r.id}" value="${r.endMonth || ""}" style="margin-bottom:0; padding:5px 8px; font-size:12px" />
+          ${r.endMonth ? `<button class="icon-btn" data-action="clear-end-month" data-id="${r.id}" style="font-size:11px; text-decoration:underline">retirer</button>` : ""}
         </div>
       </div>`).join("");
   }
@@ -399,18 +598,23 @@ function render() {
     return;
   }
   const monthData = computeMonth(state.cursor, state.oneOff, state.recurring);
+  monthData.report = computeCarryover(state.cursor, state.oneOff, state.recurring);
   root.innerHTML = `
     <div class="wrap">
       ${headerHTML()}
       ${monthNavHTML()}
       ${monthStripHTML()}
       ${heroCardHTML(monthData)}
+      ${budgetCourseCardHTML(monthData)}
+      ${epargneCardHTML()}
       ${categoryCardHTML(monthData)}
       ${entriesCardHTML(monthData)}
     </div>
     <button class="fab" data-action="open-form">+</button>
     ${formSheetHTML()}
     ${recurringSheetHTML()}
+    ${epargneFormSheetHTML()}
+    ${epargnePanelHTML()}
     <input id="import-file" type="file" accept="application/json" style="display:none" />
   `;
   // restore draft values into the (freshly rebuilt) form inputs
@@ -419,7 +623,12 @@ function render() {
     const a = document.getElementById("f-amount"); if (a) a.value = state.draft.amount;
     const d = document.getElementById("f-date"); if (d) d.value = state.draft.date;
     const day = document.getElementById("f-day"); if (day) day.value = state.draft.day;
+    const endmonth = document.getElementById("f-endmonth"); if (endmonth) endmonth.value = state.draft.endMonth || "";
     const cat = document.getElementById("f-cat"); if (cat) cat.value = state.draft.category || cat.value;
+  }
+  if (state.epargneFormOpen) {
+    const ea = document.getElementById("f-epargne-amount"); if (ea) ea.value = state.epargneDraft.amount;
+    const ed = document.getElementById("f-epargne-date"); if (ed) ed.value = state.epargneDraft.date;
   }
 }
 
@@ -429,14 +638,20 @@ function captureDraft() {
   const a = document.getElementById("f-amount"); if (a) state.draft.amount = a.value;
   const d = document.getElementById("f-date"); if (d) state.draft.date = d.value;
   const day = document.getElementById("f-day"); if (day) state.draft.day = day.value;
+  const endmonth = document.getElementById("f-endmonth"); if (endmonth) state.draft.endMonth = endmonth.value;
   const cat = document.getElementById("f-cat"); if (cat) state.draft.category = cat.value;
+}
+function captureEpargneDraft() {
+  if (!state.epargneFormOpen) return;
+  const ea = document.getElementById("f-epargne-amount"); if (ea) state.epargneDraft.amount = ea.value;
+  const ed = document.getElementById("f-epargne-date"); if (ed) state.epargneDraft.date = ed.value;
 }
 
 function update() { captureDraft(); render(); }
 
 // ---------- actions ----------
 function exportData() {
-  const payload = { exportedAt: new Date().toISOString(), entries: state.oneOff, recurring: state.recurring };
+  const payload = { exportedAt: new Date().toISOString(), entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, budgets: state.budgets };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -454,10 +669,18 @@ function handleImportFile(file) {
       const parsed = JSON.parse(reader.result);
       const importedEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
       const importedRecurring = Array.isArray(parsed.recurring) ? parsed.recurring : [];
+      const importedEpargne = Array.isArray(parsed.epargneMouvements) ? parsed.epargneMouvements : [];
       const existingIds = new Set(state.oneOff.map((x) => x.id));
       const existingRecIds = new Set(state.recurring.map((x) => x.id));
+      const existingEpargneIds = new Set(state.epargneMouvements.map((x) => x.id));
       state.oneOff = [...state.oneOff, ...importedEntries.filter((x) => x && x.id && !existingIds.has(x.id))];
       state.recurring = [...state.recurring, ...importedRecurring.filter((x) => x && x.id && !existingRecIds.has(x.id))];
+      state.epargneMouvements = [...state.epargneMouvements, ...importedEpargne.filter((x) => x && x.id && !existingEpargneIds.has(x.id))];
+      if (parsed.budgets) {
+        Object.keys(parsed.budgets).forEach((cat) => {
+          state.budgets[cat] = { ...(state.budgets[cat] || {}), ...parsed.budgets[cat] };
+        });
+      }
       persist();
       state.error = null;
     } catch (err) {
@@ -515,7 +738,7 @@ document.addEventListener("click", (e) => {
       if (state.freq === "ponctuelle") {
         state.oneOff.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, date: state.draft.date || todayISO() });
       } else {
-        state.recurring.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, day: Math.max(1, Math.min(31, parseInt(state.draft.day, 10) || 1)), startMonth: state.cursor, endMonth: null });
+        state.recurring.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, day: Math.max(1, Math.min(31, parseInt(state.draft.day, 10) || 1)), startMonth: state.cursor, endMonth: state.draft.endMonth || null });
       }
       persist();
       state.formOpen = false;
@@ -532,6 +755,54 @@ document.addEventListener("click", (e) => {
     case "remove-recurring": {
       const id = btn.getAttribute("data-id");
       state.recurring = state.recurring.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "clear-end-month": {
+      const id = btn.getAttribute("data-id");
+      const r = state.recurring.find((x) => x.id === id);
+      if (r) r.endMonth = null;
+      persist();
+      update();
+      break;
+    }
+    case "open-epargne-form":
+      state.epargneFormOpen = true;
+      state.epargneDraft = { categorie: "enfants", type: "versement", amount: "", date: todayISO() };
+      update();
+      break;
+    case "close-epargne-form": state.epargneFormOpen = false; update(); break;
+    case "open-epargne-panel": state.epargnePanelOpen = true; update(); break;
+    case "close-epargne-panel": state.epargnePanelOpen = false; update(); break;
+    case "set-epargne-cat": {
+      captureEpargneDraft();
+      state.epargneDraft.categorie = btn.getAttribute("data-cat");
+      render();
+      break;
+    }
+    case "set-epargne-type": {
+      captureEpargneDraft();
+      state.epargneDraft.type = btn.getAttribute("data-type");
+      render();
+      break;
+    }
+    case "add-epargne": {
+      captureEpargneDraft();
+      const amt = parseFloat(String(state.epargneDraft.amount).replace(",", "."));
+      if (!amt || amt <= 0) return;
+      state.epargneMouvements.push({
+        id: uid(), categorie: state.epargneDraft.categorie, type: state.epargneDraft.type,
+        amount: Math.round(amt * 100) / 100, date: state.epargneDraft.date || todayISO(),
+      });
+      persist();
+      state.epargneFormOpen = false;
+      update();
+      break;
+    }
+    case "remove-epargne": {
+      const id = btn.getAttribute("data-id");
+      state.epargneMouvements = state.epargneMouvements.filter((x) => x.id !== id);
       persist();
       update();
       break;
@@ -554,6 +825,20 @@ document.addEventListener("change", (e) => {
     const file = e.target.files && e.target.files[0];
     if (file) handleImportFile(file);
     e.target.value = "";
+    return;
+  }
+  if (e.target && e.target.id === "budget-alim") {
+    setBudget("Alimentation", state.cursor, parseFloat(e.target.value) || 0);
+    persist();
+    update();
+    return;
+  }
+  if (e.target && e.target.classList && e.target.classList.contains("recurring-end-input")) {
+    const id = e.target.getAttribute("data-id");
+    const r = state.recurring.find((x) => x.id === id);
+    if (r) r.endMonth = e.target.value || null;
+    persist();
+    update();
   }
 });
 
