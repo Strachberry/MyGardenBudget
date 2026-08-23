@@ -97,8 +97,12 @@ function computeMonth(cursor, oneOff, recurring) {
   const dim = daysInMonth(y, m);
   const recInstances = recurring
     .filter((r) => cursor >= r.startMonth && (!r.endMonth || cursor <= r.endMonth))
-    .map((r) => ({ id: `${r.id}-${cursor}`, type: r.type, label: r.label, category: r.category, amount: r.amount,
-      date: `${cursor}-${String(Math.min(r.day, dim)).padStart(2, "0")}`, recurring: true, templateId: r.id }));
+    .map((r) => {
+      const overridden = r.overrides && r.overrides[cursor] !== undefined;
+      return { id: `${r.id}-${cursor}`, type: r.type, label: r.label, category: r.category,
+        amount: overridden ? r.overrides[cursor] : r.amount,
+        date: `${cursor}-${String(Math.min(r.day, dim)).padStart(2, "0")}`, recurring: true, templateId: r.id, overridden };
+    });
   const oneOffMonth = oneOff.filter((e) => monthKey(e.date) === cursor);
   const all = [...oneOffMonth, ...recInstances];
   const revenus = all.filter((e) => e.type === "revenu").reduce((s, e) => s + e.amount, 0);
@@ -221,7 +225,9 @@ function budSVG(tauxCharges, hasData, hasRevenu) {
 let state = {
   oneOff: [], recurring: [], epargneMouvements: [], epargneRecurrents: [], reportManuel: {}, loading: true, error: null,
   cursor: todayISO().slice(0, 7),
-  formOpen: false, recurringPanelOpen: false, epargneFormOpen: false, epargnePanelOpen: false,
+  formOpen: false, recurringPanelOpen: false, epargneFormOpen: false, epargnePanelOpen: false, overrideOpen: false, overrideTemplateId: null, overrideAmount: "",
+  treasuryOpen: false, treasuryContext: "global", treasuryAdjustOpen: false,
+  treasuryAdjustDraft: { amount: "", cat: "enfants" },
   formType: "charge", freq: "ponctuelle", epargneFreq: "ponctuelle",
   epargneFormContext: "epargne", epargnePanelContext: "epargne",
   saving: false,
@@ -248,6 +254,84 @@ function compteBalance(cat, cursor, mouvements, recurrents) {
     }
   });
   return total;
+}
+
+// ---------- trésorerie temps réel (pointage passé / solde actuel / à venir) ----------
+function futureDateISO(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function monthRange(startMonth, endMonth) {
+  const out = [];
+  let m = startMonth, guard = 0;
+  while (m <= endMonth && guard < 24) { out.push(m); m = addMonths(m, 1); guard++; }
+  return out;
+}
+function splitLedger(ops, startBalance, today) {
+  ops.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  let balance = startBalance;
+  const past = [], future = [];
+  ops.forEach((op) => {
+    balance += op.amount;
+    const withBalance = { ...op, balance };
+    (op.date <= today ? past : future).push(withBalance);
+  });
+  const soldeActuel = past.length ? past[past.length - 1].balance : startBalance;
+  return { past: [...past].reverse(), future, soldeActuel };
+}
+function buildGlobalLedger() {
+  const today = todayISO();
+  const monthStart = today.slice(0, 7) + "-01";
+  const endDate = futureDateISO(90);
+  const months = monthRange(monthKey(monthStart), monthKey(endDate));
+  const ops = [];
+  state.oneOff.forEach((e) => {
+    if (e.date >= monthStart && e.date <= endDate) {
+      ops.push({ date: e.date, label: e.label, amount: e.type === "revenu" ? e.amount : -e.amount, recurring: false });
+    }
+  });
+  months.forEach((mo) => {
+    state.recurring.forEach((r) => {
+      if (mo >= r.startMonth && (!r.endMonth || mo <= r.endMonth)) {
+        const [y, m] = mo.split("-").map(Number);
+        const date = `${mo}-${String(Math.min(r.day, daysInMonth(y, m))).padStart(2, "0")}`;
+        if (date >= monthStart && date <= endDate) {
+          const amt = r.overrides && r.overrides[mo] !== undefined ? r.overrides[mo] : r.amount;
+          ops.push({ date, label: r.label, amount: r.type === "revenu" ? amt : -amt, recurring: true });
+        }
+      }
+    });
+  });
+  return splitLedger(ops, getReportManuel(monthKey(monthStart)), today);
+}
+function buildCompteLedger(context) {
+  const cats = CONTEXT_CATS[context];
+  const today = todayISO();
+  const monthStart = today.slice(0, 7) + "-01";
+  const endDate = futureDateISO(90);
+  const prevMonth = addMonths(monthKey(monthStart), -1);
+  const months = monthRange(monthKey(monthStart), monthKey(endDate));
+  let startBalance = 0;
+  cats.forEach((cat) => { startBalance += compteBalance(cat, prevMonth, state.epargneMouvements, state.epargneRecurrents); });
+  const ops = [];
+  state.epargneMouvements.forEach((mv) => {
+    if (cats.includes(mv.categorie) && mv.date >= monthStart && mv.date <= endDate) {
+      ops.push({ date: mv.date, label: `${COMPTE_LABELS[mv.categorie]} — ${mv.type === "versement" ? "Versement" : "Retrait"}`, amount: mv.type === "versement" ? mv.amount : -mv.amount, recurring: false });
+    }
+  });
+  months.forEach((mo) => {
+    state.epargneRecurrents.forEach((r) => {
+      if (cats.includes(r.categorie) && mo >= r.startMonth && (!r.endMonth || mo <= r.endMonth)) {
+        const [y, m] = mo.split("-").map(Number);
+        const date = `${mo}-${String(Math.min(r.day, daysInMonth(y, m))).padStart(2, "0")}`;
+        if (date >= monthStart && date <= endDate) {
+          ops.push({ date, label: `${COMPTE_LABELS[r.categorie]} — ${r.type === "versement" ? "Versement" : "Retrait"} (récurrent)`, amount: r.type === "versement" ? r.amount : -r.amount, recurring: true });
+        }
+      }
+    });
+  });
+  return splitLedger(ops, startBalance, today);
 }
 
 function loadData() {
@@ -298,6 +382,7 @@ function headerHTML() {
   <div class="row between" style="margin-bottom:20px">
     <p class="muted" style="font-size:12px; font-style:italic; margin:0">${state.saving ? "on arrose…" : "budget &amp; épargne, à ton rythme"}</p>
     <div class="row" style="gap:12px">
+      <button class="link-btn" data-action="open-treasury">Trésorerie</button>
       <button class="link-btn" data-action="export-data">Exporter</button>
       <button class="link-btn" data-action="trigger-import">Importer</button>
     </div>
@@ -506,12 +591,15 @@ function entriesCardHTML(monthData) {
           <div class="row" style="gap:6px">
             <span style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${esc(e.label)}</span>
             ${e.recurring ? `<span style="color:var(--gold); font-size:12px">⟳</span>` : ""}
+            ${e.overridden ? `<span class="muted" style="font-size:9px; border:1px solid var(--rule); border-radius:999px; padding:1px 6px">modifié ce mois</span>` : ""}
           </div>
           <div class="muted" style="font-size:10px">${esc(e.category)} · ${e.date.slice(8, 10)}/${e.date.slice(5, 7)}</div>
         </div>
         <div class="row" style="gap:8px; flex-shrink:0">
           <span style="font-size:14px; font-weight:500; color:${e.type === "revenu" ? "var(--stem)" : "var(--danger)"}">${e.type === "revenu" ? "+" : "−"}${fmtEUR(e.amount)}</span>
-          ${!e.recurring ? `<button class="icon-btn" data-action="remove-oneoff" data-id="${e.id}">🗑</button>` : ""}
+          ${e.recurring
+            ? `<button class="icon-btn" data-action="open-amount-override" data-id="${e.templateId}" title="Montant exceptionnel ce mois-ci">✎</button>`
+            : `<button class="icon-btn" data-action="remove-oneoff" data-id="${e.id}">🗑</button>`}
         </div>
       </div>`).join("");
   }
@@ -604,6 +692,95 @@ function recurringSheetHTML() {
   </div>`;
 }
 
+function amountOverrideSheetHTML() {
+  if (!state.overrideOpen) return "";
+  const r = state.recurring.find((x) => x.id === state.overrideTemplateId);
+  if (!r) return "";
+  const hasOverride = r.overrides && r.overrides[state.cursor] !== undefined;
+  const { full } = monthLabelOf(state.cursor);
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-amount-override">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Montant exceptionnel</h2>
+        <button class="icon-btn" data-action="close-amount-override" style="font-size:20px">✕</button>
+      </div>
+      <p class="muted" style="font-size:13px; margin:0 0 14px">${esc(r.label)} — montant habituel : ${fmtEUR(r.amount)}. Modifie-le uniquement pour ${full}, sans toucher aux autres mois.</p>
+      <label class="field-label">Montant pour ${full} (€)</label>
+      <input id="f-override-amount" inputmode="decimal" placeholder="0" />
+      <button class="btn-primary" data-action="save-amount-override">Enregistrer pour ce mois</button>
+      ${hasOverride ? `<button class="link-btn" data-action="clear-amount-override" style="display:block; text-align:center; margin:14px auto 0">Revenir au montant habituel</button>` : ""}
+    </div>
+  </div>`;
+}
+
+const TREASURY_TITLES = { global: "Calcul global", epargne: "Épargne", courses: "Courses" };
+
+function treasuryOpRow(op) {
+  const [y, mo, d] = op.date.split("-");
+  return `
+  <div class="entry-row">
+    <div style="min-width:0; padding-right:8px">
+      <div class="row" style="gap:6px">
+        <span style="font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${esc(op.label)}</span>
+        ${op.recurring ? `<span style="color:var(--gold); font-size:11px">⟳</span>` : ""}
+      </div>
+      <div class="muted" style="font-size:10px">${d}/${mo}/${y}</div>
+    </div>
+    <div style="text-align:right; flex-shrink:0">
+      <div style="font-size:13px; font-weight:500; color:${op.amount < 0 ? "var(--danger)" : "var(--stem)"}">${op.amount >= 0 ? "+" : "−"}${fmtEUR(Math.abs(op.amount))}</div>
+      <div class="muted" style="font-size:10px">solde ${fmtEUR(op.balance)}</div>
+    </div>
+  </div>`;
+}
+
+function treasurySheetHTML() {
+  if (!state.treasuryOpen) return "";
+  const ctx = state.treasuryContext;
+  const ledger = ctx === "global" ? buildGlobalLedger() : buildCompteLedger(ctx);
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-treasury">
+    <div class="sheet" style="max-height:94vh">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">Trésorerie</h2>
+        <button class="icon-btn" data-action="close-treasury" style="font-size:20px">✕</button>
+      </div>
+      <div class="segmented">
+        <button class="${ctx === "global" ? "active-gold" : ""}" data-action="set-treasury-ctx" data-ctx="global">Global</button>
+        <button class="${ctx === "epargne" ? "active-gold" : ""}" data-action="set-treasury-ctx" data-ctx="epargne">Épargne</button>
+        <button class="${ctx === "courses" ? "active-gold" : ""}" data-action="set-treasury-ctx" data-ctx="courses">Courses</button>
+      </div>
+      <div class="card" style="margin-bottom:16px; padding:16px; background:var(--ok-soft)">
+        <div class="row between">
+          <span class="muted" style="font-size:13px">Solde actuel — ${TREASURY_TITLES[ctx]}</span>
+          <span style="font-size:20px; font-weight:700; color:${ledger.soldeActuel < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(ledger.soldeActuel)}</span>
+        </div>
+        ${!state.treasuryAdjustOpen
+          ? `<button class="link-btn" data-action="toggle-treasury-adjust" style="margin-top:10px">Mettre à jour avec le solde réel</button>`
+          : `
+          <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--rule)">
+            <p class="muted" style="font-size:11px; margin:0 0 10px">Solde prévu par le calcul : ${fmtEUR(ledger.soldeActuel)}. Indique le solde réel constaté (relevé bancaire, cagnotte...) — l'écart sera ajouté automatiquement comme écriture d'ajustement, datée d'aujourd'hui.</p>
+            ${ctx === "epargne" ? `
+            <label class="field-label">Compte à ajuster</label>
+            <select id="f-treasury-adjust-cat">
+              ${CONTEXT_CATS.epargne.map((cat) => `<option value="${cat}" ${state.treasuryAdjustDraft.cat === cat ? "selected" : ""}>${COMPTE_LABELS[cat]}</option>`).join("")}
+            </select>` : ""}
+            <label class="field-label">Solde réel constaté (€)</label>
+            <input id="f-treasury-adjust-amount" inputmode="decimal" placeholder="0" />
+            <div class="row" style="gap:10px">
+              <button class="btn-primary" data-action="confirm-treasury-adjust" style="flex:1">Valider</button>
+              <button class="link-btn" data-action="toggle-treasury-adjust">Annuler</button>
+            </div>
+          </div>`}
+      </div>
+      <div class="eyebrow">À venir (90 prochains jours)</div>
+      ${ledger.future.length === 0 ? `<p class="muted" style="font-size:13px; padding:6px 0; font-style:italic">Rien de programmé pour l'instant.</p>` : ledger.future.map(treasuryOpRow).join("")}
+      <div class="eyebrow" style="margin-top:16px">Opérations passées (ce mois-ci)</div>
+      ${ledger.past.length === 0 ? `<p class="muted" style="font-size:13px; padding:6px 0; font-style:italic">Aucune opération pointée pour l'instant.</p>` : ledger.past.map(treasuryOpRow).join("")}
+    </div>
+  </div>`;
+}
+
 function render() {
   const root = document.getElementById("root");
   if (state.loading) {
@@ -628,6 +805,8 @@ function render() {
     ${recurringSheetHTML()}
     ${epargneFormSheetHTML()}
     ${epargnePanelHTML()}
+    ${amountOverrideSheetHTML()}
+    ${treasurySheetHTML()}
     <input id="import-file" type="file" accept="application/json" style="display:none" />
   `;
   // restore draft values into the (freshly rebuilt) form inputs
@@ -646,6 +825,13 @@ function render() {
     const eday = document.getElementById("f-epargne-day"); if (eday) eday.value = state.epargneDraft.day;
     const esm = document.getElementById("f-epargne-startmonth"); if (esm) esm.value = state.epargneDraft.startMonth || state.cursor;
     const eem = document.getElementById("f-epargne-endmonth"); if (eem) eem.value = state.epargneDraft.endMonth || "";
+  }
+  if (state.overrideOpen) {
+    const oa = document.getElementById("f-override-amount"); if (oa) oa.value = state.overrideAmount;
+  }
+  if (state.treasuryAdjustOpen) {
+    const ta = document.getElementById("f-treasury-adjust-amount"); if (ta) ta.value = state.treasuryAdjustDraft.amount;
+    const tc = document.getElementById("f-treasury-adjust-cat"); if (tc) tc.value = state.treasuryAdjustDraft.cat;
   }
 }
 
@@ -666,6 +852,11 @@ function captureEpargneDraft() {
   const eday = document.getElementById("f-epargne-day"); if (eday) state.epargneDraft.day = eday.value;
   const esm = document.getElementById("f-epargne-startmonth"); if (esm) state.epargneDraft.startMonth = esm.value;
   const eem = document.getElementById("f-epargne-endmonth"); if (eem) state.epargneDraft.endMonth = eem.value;
+}
+function captureTreasuryAdjustDraft() {
+  if (!state.treasuryAdjustOpen) return;
+  const ta = document.getElementById("f-treasury-adjust-amount"); if (ta) state.treasuryAdjustDraft.amount = ta.value;
+  const tc = document.getElementById("f-treasury-adjust-cat"); if (tc) state.treasuryAdjustDraft.cat = tc.value;
 }
 
 function update() { captureDraft(); render(); }
@@ -784,6 +975,71 @@ document.addEventListener("click", (e) => {
       const r = state.recurring.find((x) => x.id === id);
       if (r) r.endMonth = null;
       persist();
+      update();
+      break;
+    }
+    case "open-amount-override": {
+      const id = btn.getAttribute("data-id");
+      const r = state.recurring.find((x) => x.id === id);
+      if (!r) return;
+      state.overrideOpen = true;
+      state.overrideTemplateId = id;
+      state.overrideAmount = (r.overrides && r.overrides[state.cursor] !== undefined) ? String(r.overrides[state.cursor]) : String(r.amount);
+      update();
+      break;
+    }
+    case "close-amount-override": state.overrideOpen = false; update(); break;
+    case "save-amount-override": {
+      const input = document.getElementById("f-override-amount");
+      const amt = parseFloat(String(input ? input.value : state.overrideAmount).replace(",", "."));
+      const r = state.recurring.find((x) => x.id === state.overrideTemplateId);
+      if (!r || !amt || amt <= 0) return;
+      if (!r.overrides) r.overrides = {};
+      r.overrides[state.cursor] = Math.round(amt * 100) / 100;
+      persist();
+      state.overrideOpen = false;
+      update();
+      break;
+    }
+    case "clear-amount-override": {
+      const r = state.recurring.find((x) => x.id === state.overrideTemplateId);
+      if (r && r.overrides) delete r.overrides[state.cursor];
+      persist();
+      state.overrideOpen = false;
+      update();
+      break;
+    }
+    case "open-treasury": state.treasuryOpen = true; update(); break;
+    case "close-treasury": state.treasuryOpen = false; update(); break;
+    case "set-treasury-ctx": state.treasuryContext = btn.getAttribute("data-ctx"); update(); break;
+    case "toggle-treasury-adjust": {
+      captureTreasuryAdjustDraft();
+      if (!state.treasuryAdjustOpen) {
+        const ledger = state.treasuryContext === "global" ? buildGlobalLedger() : buildCompteLedger(state.treasuryContext);
+        state.treasuryAdjustDraft = { amount: String(ledger.soldeActuel), cat: CONTEXT_CATS[state.treasuryContext] ? CONTEXT_CATS[state.treasuryContext][0] : "enfants" };
+      }
+      state.treasuryAdjustOpen = !state.treasuryAdjustOpen;
+      update();
+      break;
+    }
+    case "confirm-treasury-adjust": {
+      captureTreasuryAdjustDraft();
+      const ctx = state.treasuryContext;
+      const ledger = ctx === "global" ? buildGlobalLedger() : buildCompteLedger(ctx);
+      const soldeReel = parseFloat(String(state.treasuryAdjustDraft.amount).replace(",", "."));
+      if (isNaN(soldeReel)) return;
+      const diff = Math.round((soldeReel - ledger.soldeActuel) * 100) / 100;
+      if (diff !== 0) {
+        const today = todayISO();
+        if (ctx === "global") {
+          state.oneOff.push({ id: uid(), type: diff > 0 ? "revenu" : "charge", label: "Ajustement solde (réel constaté)", category: diff > 0 ? "Autres revenus" : "Autres charges", amount: Math.abs(diff), date: today });
+        } else {
+          const cat = ctx === "courses" ? "courses" : (state.treasuryAdjustDraft.cat || "enfants");
+          state.epargneMouvements.push({ id: uid(), categorie: cat, type: diff > 0 ? "versement" : "retrait", amount: Math.abs(diff), date: today });
+        }
+        persist();
+      }
+      state.treasuryAdjustOpen = false;
       update();
       break;
     }
