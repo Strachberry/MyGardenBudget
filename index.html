@@ -188,9 +188,27 @@ function computeMonth(cursor, oneOff, recurring) {
   return { all, revenus, charges, epargne, tauxEpargne, tauxCharges };
 }
 
-// budget restant du mois précédent : saisi directement par l'utilisateur, mois par mois
-function getReportManuel(cursor) {
-  return state.reportManuel[cursor] || 0;
+function earliestMonth(oneOff, recurring) {
+  const months = [];
+  oneOff.forEach((e) => months.push(monthKey(e.date)));
+  recurring.forEach((r) => months.push(r.startMonth));
+  if (months.length === 0) return null;
+  return months.sort()[0];
+}
+// solde reporté automatiquement : somme de l'épargne (ou du déficit) de tous les mois précédents,
+// pour que les mois s'enchaînent en continu (comme un vrai relevé de trésorerie).
+// Les écritures d'ajustement issues du recalage (Trésorerie → solde réel) sont incluses
+// dans ce calcul, ce qui le garde fidèle à la réalité au fil du temps.
+function computeCarryover(cursor, oneOff, recurring) {
+  const earliest = earliestMonth(oneOff, recurring);
+  if (!earliest || earliest >= cursor) return 0;
+  let m = earliest, total = 0, guard = 0;
+  while (m < cursor && guard < 600) {
+    total += computeMonth(m, oneOff, recurring).epargne;
+    m = addMonths(m, 1);
+    guard++;
+  }
+  return total;
 }
 
 // ---------- SVG builders ----------
@@ -380,7 +398,7 @@ function buildGlobalLedger() {
       }
     });
   });
-  return splitLedger(ops, getReportManuel(monthKey(monthStart)), today);
+  return splitLedger(ops, computeCarryover(monthKey(monthStart), state.oneOff, state.recurring), today);
 }
 function buildCompteLedger(context) {
   const cats = CONTEXT_CATS[context];
@@ -498,21 +516,22 @@ function monthStripHTML() {
 
 function heroCardHTML(monthData) {
   const health = healthFactor(monthData.tauxCharges, monthData.revenus > 0);
+  const soldeFinDeMois = monthData.report + monthData.epargne;
   return `
   <div class="card" style="display:flex; flex-direction:column; align-items:center; margin-bottom:20px">
     ${heroFlowerSVG(monthData)}
     <div style="width:100%; margin-top:8px">
       <div class="statline"><span class="muted" style="font-size:14px">Revenus</span><span style="color:var(--stem); font-weight:600">${fmtEUR(monthData.revenus)}</span></div>
-      <div class="row between" style="padding-top:8px">
-        <span class="muted" style="font-size:14px">Charges</span>
-        <span style="color:var(--danger); font-weight:600">${fmtEUR(monthData.charges)}</span>
-      </div>
+      <div class="statline"><span class="muted" style="font-size:14px">Charges</span><span style="color:var(--danger); font-weight:600">${fmtEUR(monthData.charges)}</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">Report du mois précédent</span><span style="font-weight:600; color:${monthData.report < 0 ? "var(--danger)" : "var(--ink)"}">${fmtEUR(monthData.report)}</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">Budget disponible du mois</span><span style="font-weight:600; color:${monthData.epargne < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(monthData.epargne)}</span></div>
       <div class="row between" style="padding-top:8px; border-top:1px solid var(--rule); margin-top:8px">
-        <span class="muted" style="font-size:14px">Budget disponible du mois</span>
-        <span style="font-size:18px; font-weight:700; color:${monthData.epargne < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(monthData.epargne)}</span>
+        <span class="muted" style="font-size:14px">Solde estimé fin de mois</span>
+        <span style="font-size:18px; font-weight:700; color:${soldeFinDeMois < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(soldeFinDeMois)}</span>
       </div>
     </div>
-    ${health < 0.4 ? `<p style="font-size:12px; margin-top:12px; text-align:center; color:var(--danger)">La plante peine ce mois-ci — les charges dépassent l'objectif de 50% des revenus.</p>` : ""}
+    <p class="muted" style="font-size:11px; margin:10px 0 0; text-align:center">Ce solde se reporte automatiquement sur le mois suivant.</p>
+    ${health < 0.4 ? `<p style="font-size:12px; margin-top:8px; text-align:center; color:var(--danger)">La plante peine ce mois-ci — les charges dépassent l'objectif de 50% des revenus.</p>` : ""}
   </div>`;
 }
 
@@ -907,7 +926,7 @@ function render() {
     return;
   }
   const monthData = computeMonth(state.cursor, state.oneOff, state.recurring);
-  monthData.report = getReportManuel(state.cursor);
+  monthData.report = computeCarryover(state.cursor, state.oneOff, state.recurring);
   root.innerHTML = `
     <div class="wrap">
       ${headerHTML()}
