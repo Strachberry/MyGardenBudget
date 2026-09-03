@@ -1,0 +1,1686 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#EEEAF0" />
+<title>Budget Garden — Strachberry</title>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon-192.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<style>
+  :root{
+    --bg:#EEEAF0; --card:#FBF9FB; --ink:#3B2E42; --ink-soft:#8A7C90; --rule:#E1D9E5;
+    --stem:#5B7B54; --gold:#D9A441; --gold-soft:#F3E9D2; --danger:#B5555A; --danger-soft:#F3E1E1; --ok-soft:#E6EFE2;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; background:var(--bg); overscroll-behavior-y:none; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+  }
+  .display { font-family: Georgia, "Times New Roman", serif; }
+  .wrap { max-width: 448px; margin: 0 auto; padding: 32px 20px 112px; }
+  .row { display:flex; align-items:center; }
+  .between { justify-content:space-between; }
+  .center { justify-content:center; align-items:center; }
+  .card { background:var(--card); border:1px solid var(--rule); border-radius:24px; padding:20px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+  .muted { color: var(--ink-soft); }
+  .eyebrow { color:var(--ink-soft); font-size:10px; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:12px; }
+  .statline { display:flex; justify-content:space-between; align-items:baseline; padding:8px 0; border-bottom:1px solid var(--rule); }
+  .statline:last-of-type { border-bottom:none; }
+  .month-strip { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:24px; justify-content:center; scrollbar-width:none; }
+  .month-strip::-webkit-scrollbar { display:none; }
+  .month-chip { flex-shrink:0; min-width:54px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; border-radius:14px; padding:8px 12px; border:1px solid var(--rule); background:var(--card); }
+  .month-chip.active { background:var(--ok-soft); border-color:var(--stem); }
+  .navbtn { background:none; border:none; font-size:22px; color:var(--ink-soft); padding:8px; cursor:pointer; }
+  .fab { position:fixed; bottom:24px; right:24px; width:56px; height:56px; border-radius:50%; background:var(--stem); color:#fff; font-size:26px; border:none; box-shadow:0 4px 10px rgba(0,0,0,0.2); cursor:pointer; }
+  .sheet-overlay { position:fixed; inset:0; background:rgba(59,46,66,0.35); display:flex; align-items:flex-end; justify-content:center; z-index:20; }
+  .sheet { width:100%; max-width:448px; background:var(--bg); border-top:2px solid var(--stem); border-radius:24px 24px 0 0; padding:20px 20px 32px; max-height:90vh; overflow-y:auto; }
+  .field-label { display:block; font-size:12px; margin-bottom:4px; color:var(--ink-soft); }
+  input, select { font-family: inherit; width:100%; padding:9px 12px; border-radius:14px; border:1px solid var(--rule); background:var(--card); color:var(--ink); font-size:14px; margin-bottom:12px; }
+  .segmented { display:flex; border:1px solid var(--rule); border-radius:999px; overflow:hidden; margin-bottom:12px; }
+  .segmented button { flex:1; border:none; background:transparent; padding:9px 0; font-size:13px; font-weight:500; cursor:pointer; color:var(--ink-soft); font-family:inherit; }
+  .segmented button.active-revenu { background:var(--ok-soft); color:var(--stem); }
+  .segmented button.active-charge { background:var(--danger-soft); color:var(--danger); }
+  .segmented button.active-gold { background:var(--gold-soft); color:var(--gold); }
+  .btn-primary { width:100%; padding:12px 0; border-radius:999px; background:var(--stem); color:#fff; border:none; font-size:14px; font-weight:500; cursor:pointer; }
+  .link-btn { background:none; border:none; color:var(--ink-soft); font-size:10px; letter-spacing:1px; text-transform:uppercase; text-decoration:underline; cursor:pointer; padding:0; font-family:inherit; }
+  .icon-btn { background:none; border:none; cursor:pointer; color:var(--ink-soft); font-size:14px; }
+  .entry-row { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--rule); }
+  .bar-track { background:var(--rule); height:8px; border-radius:999px; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:999px; }
+  .strachberry-badge { font-size:9px; letter-spacing:0.5px; text-transform:uppercase; color:var(--ink-soft); }
+  .lang-btn { background:none; border:none; font-size:14px; cursor:pointer; padding:8px; color:var(--ink-soft); }
+  .lang-btn.active { color:var(--stem); font-weight:600; }
+  .category-tag { display:inline-flex; align-items:center; gap:6px; background:var(--gold-soft); color:var(--gold); padding:6px 12px; border-radius:999px; font-size:12px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ---------- Traductions ----------
+const TRANSLATIONS = {
+  fr: {
+    app_name: "Budget Garden",
+    by_strachberry: "par Strachberry",
+    watering: "on arrose…",
+    tagline: "budget & épargne, à ton rythme",
+    recurring_btn: "⚙ Récurrentes",
+    treasury_btn: "Trésorerie",
+    sync_btn: "Synchro",
+    export_btn: "Exporter",
+    import_btn: "Importer",
+    new_entry: "Nouvelle écriture",
+    new_movement: "Mouvement",
+    income: "Revenu",
+    expense: "Charge",
+    savings: "Épargne",
+    oneoff: "Ponctuel",
+    recurring: "Mensuelle",
+    label: "Libellé",
+    category: "Catégorie",
+    amount: "Montant (€)",
+    date: "Date",
+    day: "Échéance (jour du mois)",
+    start_date: "Date de début",
+    end_date: "Date de fin (optionnelle)",
+    add_btn: "Ajouter",
+    edit_recurring: "Écritures récurrentes",
+    no_recurring: "Aucune charge ou revenu mensuel pour l'instant.",
+    edit_day: "Prélèvement le :",
+    start: "Début :",
+    end: "Fin :",
+    remove_end: "retirer",
+    daily_income: "Revenus",
+    daily_expenses: "Charges",
+    previous_balance: "Report du mois précédent",
+    available_budget: "Budget disponible du mois",
+    estimated_balance: "Solde estimé fin de mois",
+    auto_report: "Ce solde se reporte automatiquement sur le mois suivant.",
+    difficulty: "La plante peine ce mois-ci — les charges dépassent l'objectif de 50% des revenus.",
+    savings_title: "Épargne",
+    savings_history: "Historique",
+    accounts_title: "Comptes courants",
+    accounts_history: "Historique",
+    recurring_header: "Récurrents",
+    oneoff_header: "Ponctuels",
+    no_movements: "Aucun mouvement ponctuel pour l'instant.",
+    no_recurring_movements: "Aucun mouvement récurrent pour l'instant.",
+    category_garden: "Parterre des charges",
+    entries_header: "Écritures",
+    no_entries: "Aucune écriture ce mois-ci. Ajoute un revenu ou une charge.",
+    modified_this_month: "modifié ce mois",
+    adjustment: "ajustement",
+    savings_account: "Compte épargne",
+    current_account: "Compte courant",
+    deposit: "Versement",
+    withdrawal: "Retrait",
+    recurring_label: "⟳",
+    override_title: "Montant exceptionnel",
+    override_text: "Modifie-le uniquement pour ",
+    without_touching: ", sans toucher aux autres mois.",
+    amount_this_month: "Montant pour ",
+    save_this_month: "Enregistrer pour ce mois",
+    back_to_normal: "Revenir au montant habituel",
+    treasury_title: "Trésorerie",
+    treasury_global: "Calcul global",
+    treasury_savings: "Épargne",
+    treasury_accounts: "Comptes courants",
+    treasury_current_balance: "Solde actuel",
+    update_balance: "Mettre à jour avec le solde réel",
+    expected_vs_real: "Solde prévu par le calcul :",
+    real_balance_prompt: "Indique le solde réel constaté (relevé bancaire, cagnotte...) — l'écart sera ajouté automatiquement comme écriture d'ajustement.",
+    account_to_adjust: "Compte à ajuster",
+    real_balance: "Solde réel constaté (€)",
+    validate: "Valider",
+    cancel: "Annuler",
+    future_operations: "À venir (90 prochains jours)",
+    nothing_scheduled: "Rien de programmé pour l'instant.",
+    past_operations: "Opérations passées (ce mois-ci)",
+    no_operations: "Aucune opération pointée pour l'instant.",
+    unchecked_means_cancelled: "Décoche si cette écriture prévue n'a finalement pas eu lieu",
+    sync_title: "Synchronisation",
+    sync_active: "✅ Synchronisation active.",
+    sync_status: "Partage ce code sur tes autres appareils pour qu'ils partagent les mêmes données :",
+    copy_code: "Copier le code",
+    disable_sync: "Désactiver la synchronisation",
+    sync_desc: "Relie plusieurs appareils pour qu'ils partagent automatiquement les mêmes données, en temps réel.",
+    create_code: "Créer un nouveau code (1er appareil)",
+    or_join: "— ou, si tu as déjà un code —",
+    join_with_code: "Rejoindre avec un code existant",
+    join_btn: "Rejoindre",
+    import_file: "Importer un fichier",
+    export_success: "Données exportées",
+    import_error: "Ce fichier ne semble pas être une sauvegarde valide.",
+    manifest_saved: "Données enregistrées",
+    save_impossible: "Impossible d'enregistrer sur cet appareil.",
+    manage_categories: "Gérer les catégories",
+    custom_savings: "Épargne personnalisée",
+    custom_accounts: "Comptes courants personnalisés",
+    add_category: "Ajouter une catégorie",
+    category_name: "Nom de la catégorie",
+    category_emoji: "Emoji (optionnel)",
+    create_category: "Créer",
+    no_custom_yet: "Aucune catégorie personnalisée.",
+  },
+  en: {
+    app_name: "Budget Garden",
+    by_strachberry: "by Strachberry",
+    watering: "watering…",
+    tagline: "budget & savings, at your pace",
+    recurring_btn: "⚙ Recurring",
+    treasury_btn: "Treasury",
+    sync_btn: "Sync",
+    export_btn: "Export",
+    import_btn: "Import",
+    new_entry: "New entry",
+    new_movement: "Movement",
+    income: "Income",
+    expense: "Expense",
+    savings: "Savings",
+    oneoff: "One-off",
+    recurring: "Monthly",
+    label: "Label",
+    category: "Category",
+    amount: "Amount (€)",
+    date: "Date",
+    day: "Due date (day of month)",
+    start_date: "Start date",
+    end_date: "End date (optional)",
+    add_btn: "Add",
+    edit_recurring: "Recurring entries",
+    no_recurring: "No recurring income or expenses yet.",
+    edit_day: "Debit date:",
+    start: "Start:",
+    end: "End:",
+    remove_end: "remove",
+    daily_income: "Income",
+    daily_expenses: "Expenses",
+    previous_balance: "Previous month carryover",
+    available_budget: "Available budget this month",
+    estimated_balance: "Estimated balance end of month",
+    auto_report: "This balance automatically carries over to next month.",
+    difficulty: "The plant is struggling this month — expenses exceed 50% of income target.",
+    savings_title: "Savings",
+    savings_history: "History",
+    accounts_title: "Current accounts",
+    accounts_history: "History",
+    recurring_header: "Recurring",
+    oneoff_header: "One-off",
+    no_movements: "No one-off movements yet.",
+    no_recurring_movements: "No recurring movements yet.",
+    category_garden: "Expense garden",
+    entries_header: "Entries",
+    no_entries: "No entries this month. Add an income or expense.",
+    modified_this_month: "modified this month",
+    adjustment: "adjustment",
+    savings_account: "Savings account",
+    current_account: "Current account",
+    deposit: "Deposit",
+    withdrawal: "Withdrawal",
+    recurring_label: "⟳",
+    override_title: "Exceptional amount",
+    override_text: "Modify it only for ",
+    without_touching: ", without touching other months.",
+    amount_this_month: "Amount for ",
+    save_this_month: "Save for this month",
+    back_to_normal: "Back to usual amount",
+    treasury_title: "Treasury",
+    treasury_global: "Global calculation",
+    treasury_savings: "Savings",
+    treasury_accounts: "Current accounts",
+    treasury_current_balance: "Current balance",
+    update_balance: "Update with real balance",
+    expected_vs_real: "Expected balance from calculation:",
+    real_balance_prompt: "Enter the actual balance observed (bank statement, account...) — the difference will be automatically added as an adjustment entry.",
+    account_to_adjust: "Account to adjust",
+    real_balance: "Real balance observed (€)",
+    validate: "Validate",
+    cancel: "Cancel",
+    future_operations: "Upcoming (next 90 days)",
+    nothing_scheduled: "Nothing scheduled yet.",
+    past_operations: "Past operations (this month)",
+    no_operations: "No operations recorded yet.",
+    unchecked_means_cancelled: "Uncheck if this planned entry didn't actually happen",
+    sync_title: "Synchronization",
+    sync_active: "✅ Sync is active.",
+    sync_status: "Share this code on your other devices so they share the same data:",
+    copy_code: "Copy code",
+    disable_sync: "Disable synchronization",
+    sync_desc: "Link multiple devices so they automatically share the same data in real-time.",
+    create_code: "Create new code (1st device)",
+    or_join: "— or, if you already have a code —",
+    join_with_code: "Join with existing code",
+    join_btn: "Join",
+    import_file: "Import file",
+    export_success: "Data exported",
+    import_error: "This file doesn't appear to be a valid backup.",
+    manifest_saved: "Data saved",
+    save_impossible: "Cannot save on this device.",
+    manage_categories: "Manage categories",
+    custom_savings: "Custom savings",
+    custom_accounts: "Custom current accounts",
+    add_category: "Add category",
+    category_name: "Category name",
+    category_emoji: "Emoji (optional)",
+    create_category: "Create",
+    no_custom_yet: "No custom categories yet.",
+  }
+};
+
+function t(key) {
+  return TRANSLATIONS[state.language][key] || key;
+}
+
+// ---------- storage (100% local) ----------
+const storage = {
+  get: (key) => { const v = localStorage.getItem(key); return v !== null ? { key, value: v } : null; },
+  set: (key, value) => { localStorage.setItem(key, value); return { key, value }; },
+};
+
+// ---------- Firebase Firestore ----------
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyACyRGJKsXJiDsBiYL5YMqLEgd-dWbLheQ",
+  authDomain: "mybudgetgarden-1477c.firebaseapp.com",
+  projectId: "mybudgetgarden-1477c",
+  storageBucket: "mybudgetgarden-1477c.firebasestorage.app",
+  messagingSenderId: "155338153327",
+  appId: "1:155338153327:web:a565d9a7a5d23c2fdddc9a",
+};
+let firebaseApp = null, firestoreDb = null, syncUnsubscribe = null, syncDocRef = null;
+function ensureFirebase() {
+  if (firestoreDb) return true;
+  try {
+    firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
+    firestoreDb = firebase.firestore();
+    return true;
+  } catch (e) { return false; }
+}
+function genSyncCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s = "";
+  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+function buildSyncPayload() {
+  return {
+    entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements,
+    epargneRecurrents: state.epargneRecurrents, reportManuel: state.reportManuel, customCategories: state.customCategories, updatedAt: Date.now(),
+  };
+}
+function applyRemotePayload(data) {
+  state.applyingRemote = true;
+  state.oneOff = data.entries || [];
+  state.recurring = data.recurring || [];
+  state.epargneMouvements = data.epargneMouvements || [];
+  state.epargneRecurrents = data.epargneRecurrents || [];
+  state.reportManuel = data.reportManuel || {};
+  if (data.customCategories) state.customCategories = data.customCategories;
+  try { storage.set("finance-data", JSON.stringify({ entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, epargneRecurrents: state.epargneRecurrents, reportManuel: state.reportManuel, customCategories: state.customCategories })); } catch (e) {}
+  state.applyingRemote = false;
+}
+function startSync(code) {
+  if (!code) return;
+  if (!ensureFirebase()) { state.syncStatus = state.language === "fr" ? "Configuration Firebase indisponible." : "Firebase configuration unavailable."; render(); return; }
+  if (syncUnsubscribe) { syncUnsubscribe(); syncUnsubscribe = null; }
+  state.syncCode = code;
+  localStorage.setItem("sync-code", code);
+  syncDocRef = firestoreDb.collection("budgets").doc(code);
+  state.syncActive = true;
+  state.syncStatus = state.language === "fr" ? "Connexion…" : "Connecting…";
+  render();
+  syncUnsubscribe = syncDocRef.onSnapshot(
+    (snap) => {
+      if (snap.exists) {
+        applyRemotePayload(snap.data());
+      } else {
+        syncDocRef.set(buildSyncPayload()).catch(() => {});
+      }
+      state.syncStatus = state.language === "fr" ? "Synchronisé" : "Synchronized";
+      render();
+    },
+    (err) => { state.syncStatus = state.language === "fr" ? "Erreur de connexion" : "Connection error"; render(); }
+  );
+}
+function stopSync() {
+  if (syncUnsubscribe) { syncUnsubscribe(); syncUnsubscribe = null; }
+  syncDocRef = null;
+  state.syncActive = false;
+  state.syncStatus = "";
+  state.syncCode = "";
+  localStorage.removeItem("sync-code");
+  render();
+}
+
+const REVENU_CATS_FR = ["Salaire", "Primes", "Aides", "Autres revenus"];
+const CHARGE_CATS_FR = ["Logement", "Alimentation", "Transport", "Enfants", "Loisirs", "Santé", "Autres charges"];
+const REVENU_CATS_EN = ["Salary", "Bonuses", "Grants", "Other income"];
+const CHARGE_CATS_EN = ["Housing", "Food", "Transport", "Children", "Leisure", "Health", "Other expenses"];
+const DEFAULT_SAVINGS_FR = ["Enfants", "Couple", "Courses"];
+const DEFAULT_SAVINGS_EN = ["Children", "Partner", "Groceries"];
+const DEFAULT_ACCOUNTS_FR = ["Compte courant principal"];
+const DEFAULT_ACCOUNTS_EN = ["Main current account"];
+
+function getRevenueCats() { return state.language === "fr" ? REVENU_CATS_FR : REVENU_CATS_EN; }
+function getChargeCats() { return state.language === "fr" ? CHARGE_CATS_FR : CHARGE_CATS_EN; }
+function getDefaultSavings() { return state.language === "fr" ? DEFAULT_SAVINGS_FR : DEFAULT_SAVINGS_EN; }
+function getDefaultAccounts() { return state.language === "fr" ? DEFAULT_ACCOUNTS_FR : DEFAULT_ACCOUNTS_EN; }
+
+const CAT_HUE = { Enfants: 265, Children: 265, Couple: 10, Partner: 10, Courses: 20, Groceries: 20 };
+const MOIS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
+const MOIS_EN = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const MOIS_ABR_FR = ["Jan","Fév","Mar","Avr","Mai","Juin","Juil","Août","Sep","Oct","Nov","Déc"];
+const MOIS_ABR_EN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function fmtEUR(n) { return n.toLocaleString(state.language === "fr" ? "fr-FR" : "en-GB", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }); }
+function monthKey(dateStr) { return dateStr.slice(0, 7); }
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
+function daysInMonth(y, m) { return new Date(y, m, 0).getDate(); }
+function addMonths(cursor, delta) {
+  const [y, m] = cursor.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthLabelOf(cursor) {
+  const [y, m] = cursor.split("-").map(Number);
+  const mois = state.language === "fr" ? MOIS_FR : MOIS_EN;
+  const moisAbr = state.language === "fr" ? MOIS_ABR_FR : MOIS_ABR_EN;
+  return { full: `${mois[m - 1]} ${y}`, abr: moisAbr[m - 1], y, m };
+}
+function clamp01(x) { return Math.max(0, Math.min(1, x)); }
+function healthFactor(tauxCharges, hasRevenu) {
+  if (!hasRevenu) return 0.12;
+  if (tauxCharges <= 50) return 1;
+  return clamp01((100 - tauxCharges) / 50);
+}
+function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+function computeMonth(cursor, oneOff, recurring) {
+  const [y, m] = cursor.split("-").map(Number);
+  const dim = daysInMonth(y, m);
+  const recInstances = recurring
+    .filter((r) => cursor >= r.startMonth && (!r.endMonth || cursor <= r.endMonth) && !(r.excluded && r.excluded[cursor]))
+    .map((r) => {
+      const overridden = r.overrides && r.overrides[cursor] !== undefined;
+      return { id: `${r.id}-${cursor}`, type: r.type, label: r.label, category: r.category,
+        amount: overridden ? r.overrides[cursor] : r.amount,
+        date: `${cursor}-${String(Math.min(r.day, dim)).padStart(2, "0")}`, recurring: true, templateId: r.id, overridden };
+    });
+  const oneOffMonth = oneOff.filter((e) => monthKey(e.date) === cursor);
+  const all = [...oneOffMonth, ...recInstances];
+  const revenus = all.filter((e) => e.type === "revenu").reduce((s, e) => s + e.amount, 0);
+  const charges = all.filter((e) => e.type === "charge").reduce((s, e) => s + e.amount, 0);
+  const epargne = revenus - charges;
+  const tauxEpargne = revenus > 0 ? (epargne / revenus) * 100 : charges > 0 ? -100 : 0;
+  const tauxCharges = revenus > 0 ? (charges / revenus) * 100 : 0;
+  return { all, revenus, charges, epargne, tauxEpargne, tauxCharges };
+}
+
+function earliestMonth(oneOff, recurring) {
+  const months = [];
+  oneOff.forEach((e) => months.push(monthKey(e.date)));
+  recurring.forEach((r) => months.push(r.startMonth));
+  if (months.length === 0) return null;
+  return months.sort()[0];
+}
+function computeCarryover(cursor, oneOff, recurring) {
+  const earliest = earliestMonth(oneOff, recurring);
+  if (!earliest || earliest >= cursor) return 0;
+  let m = earliest, total = 0, guard = 0;
+  while (m < cursor && guard < 600) {
+    total += computeMonth(m, oneOff, recurring).epargne;
+    m = addMonths(m, 1);
+    guard++;
+  }
+  return total;
+}
+
+// ---------- SVG builders ----------
+function orchidPetalSVG(angle, cx, cy, health, wide, hue) {
+  const sat = 12 + health * 72, light = 84 - health * 24, scale = 0.5 + health * 0.5;
+  const color = `hsl(${hue} ${sat}% ${light}%)`;
+  const w = wide ? 25 : 16;
+  return `<g transform="rotate(${angle} ${cx} ${cy}) translate(${cx} ${cy}) scale(${scale}) translate(${-cx} ${-cy})">
+    <path d="M${cx},${cy - 12} C${cx - w},${cy - 36} ${cx - w * 0.75},${cy - 66} ${cx},${cy - 80} C${cx + w * 0.75},${cy - 66} ${cx + w},${cy - 36} ${cx},${cy - 12} Z" fill="${color}" opacity="0.95" />
+  </g>`;
+}
+function orchidLipSVG(cx, cy, health) {
+  const scale = 0.55 + health * 0.45;
+  const lip = `hsl(322 ${25 + health * 65}% ${62 - health * 20}%)`;
+  const throat = `hsl(45 ${35 + health * 50}% ${68 - health * 10}%)`;
+  const dot = `hsl(322 55% 32%)`;
+  const dotOp = 0.25 + health * 0.55;
+  return `<g transform="translate(${cx} ${cy + 6}) scale(${scale})">
+    <path d="M0,0 C-25,9 -30,32 -15,44 C-6,52 6,52 15,44 C30,32 25,9 0,0 Z" fill="${lip}" opacity="0.97" />
+    <ellipse cx="0" cy="20" rx="9" ry="13" fill="${throat}" opacity="0.92" />
+    <circle cx="-5" cy="14" r="1.6" fill="${dot}" opacity="${dotOp}" />
+    <circle cx="4" cy="17" r="1.4" fill="${dot}" opacity="${dotOp}" />
+    <circle cx="0" cy="25" r="1.3" fill="${dot}" opacity="${dotOp}" />
+  </g>`;
+}
+function heroFlowerSVG(monthData) {
+  const health = healthFactor(monthData.tauxCharges, monthData.revenus > 0);
+  const cx = 110, cy = 112;
+  const tone = health < 0.4 ? "var(--danger)" : health < 0.7 ? "var(--gold)" : "var(--stem)";
+
+  const stemColor = `hsl(100 ${8 + health * 47}% ${38 - health * 6}%)`;
+  const leaves = `
+    <path d="M${cx},${cy + 46} C${cx - 20},${cy + 40} ${cx - 26},${cy + 28} ${cx - 18},${cy + 20} C${cx - 8},${cy + 28} ${cx - 4},${cy + 38} ${cx},${cy + 46}" fill="${stemColor}" opacity="0.85" />
+    <path d="M${cx},${cy + 54} C${cx + 20},${cy + 48} ${cx + 26},${cy + 36} ${cx + 18},${cy + 28} C${cx + 8},${cy + 36} ${cx + 4},${cy + 46} ${cx},${cy + 54}" fill="${stemColor}" opacity="0.85" />`;
+  const stem = `<path d="M${cx},${cy + 66} C${cx},${cy + 36} ${cx},${cy + 16} ${cx},${cy + 6}" stroke="${stemColor}" stroke-width="4" fill="none" stroke-linecap="round" />`;
+
+  let top = "";
+  if (health < 0.15) {
+    const p = clamp01(health / 0.15);
+    const budColor = `hsl(95 ${10 + p * 20}% ${30 + p * 10}%)`;
+    top = `<ellipse cx="${cx}" cy="${cy + 4}" rx="${4 + p * 3}" ry="${7 + p * 4}" fill="${budColor}" />`;
+  } else if (health < 0.45) {
+    const p = clamp01((health - 0.15) / 0.3);
+    const sepals = [
+      { angle: 0, hue: 100 + p * 190 },
+      { angle: -132, hue: 100 + p * 175 },
+      { angle: 132, hue: 100 + p * 175 },
+    ];
+    top = sepals.map((s) => orchidPetalSVG(s.angle, cx, cy, 0.15 + p * 0.35, false, s.hue)).join("");
+  } else if (health < 0.75) {
+    const p = clamp01((health - 0.45) / 0.3);
+    const layout = [
+      { angle: 0, wide: false, hue: 300 },
+      { angle: -52, wide: true, hue: 315 },
+      { angle: 52, wide: true, hue: 315 },
+      { angle: -132, wide: false, hue: 285 },
+      { angle: 132, wide: false, hue: 285 },
+    ];
+    top = layout.map((pt) => orchidPetalSVG(pt.angle, cx, cy, 0.4 + p * 0.3, pt.wide, pt.hue)).join("");
+  } else {
+    const p = clamp01((health - 0.75) / 0.25);
+    const layout = [
+      { angle: 0, wide: false, hue: 300 },
+      { angle: -52, wide: true, hue: 315 },
+      { angle: 52, wide: true, hue: 315 },
+      { angle: -132, wide: false, hue: 285 },
+      { angle: 132, wide: false, hue: 285 },
+    ];
+    const petalHealth = 0.7 + p * 0.3;
+    const columnColor = `hsl(45 ${25 + petalHealth * 55}% ${72 - petalHealth * 12}%)`;
+    top = layout.map((pt) => orchidPetalSVG(pt.angle, cx, cy, petalHealth, pt.wide, pt.hue)).join("")
+      + orchidLipSVG(cx, cy, petalHealth)
+      + `<ellipse cx="${cx}" cy="${cy + 2}" rx="${6 + petalHealth * 2}" ry="${8 + petalHealth * 2}" fill="${columnColor}" />`;
+  }
+
+  return `<svg width="220" height="230" viewBox="0 0 220 230">
+    ${stem}
+    ${leaves}
+    ${top}
+    <text x="${cx}" y="${cy + 92}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--ink)">${monthData.tauxCharges.toFixed(0)}%</text>
+    <text x="${cx}" y="230" text-anchor="middle" font-size="10" letter-spacing="1" fill="${tone}">${state.language === "fr" ? "ÉQUILIBRE BUDGÉTAIRE" : "BUDGET BALANCE"}</text>
+  </svg>`;
+}
+function miniFlowerSVG(hue, health, size) {
+  const sat = 15 + health * 70, light = 78 - health * 15;
+  const color = `hsl(${hue} ${sat}% ${light}%)`;
+  const c = size;
+  let petals = "";
+  [0, 72, 144, 216, 288].forEach((a) => {
+    petals += `<g transform="rotate(${a} ${c} ${c})"><ellipse cx="${c}" cy="${c - size * 0.55}" rx="${size * 0.32}" ry="${size * 0.45}" fill="${color}" opacity="0.95" /></g>`;
+  });
+  return `<svg width="${size * 2}" height="${size * 2}" viewBox="0 0 ${c * 2} ${c * 2}" style="flex-shrink:0">${petals}<circle cx="${c}" cy="${c}" r="${size * 0.28}" fill="var(--gold)" /></svg>`;
+}
+function budSVG(tauxCharges, hasData, hasRevenu) {
+  const health = healthFactor(tauxCharges, hasRevenu);
+  const color = hasData ? `hsl(330 ${20 + health * 60}% ${72 - health * 14}%)` : "var(--rule)";
+  const r = hasData ? 5 + health * 2 : 3;
+  return `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="${r}" fill="${color}" /></svg>`;
+}
+
+// ---------- state ----------
+let state = {
+  oneOff: [], recurring: [], epargneMouvements: [], epargneRecurrents: [], reportManuel: {}, customCategories: { savings: {}, accounts: {} },
+  loading: true, error: null, language: localStorage.getItem("language") || "fr",
+  cursor: todayISO().slice(0, 7),
+  formOpen: false, recurringPanelOpen: false, epargneFormOpen: false, epargnePanelOpen: false, overrideOpen: false, overrideTemplateId: null, overrideAmount: "",
+  treasuryOpen: false, treasuryContext: "global", treasuryAdjustOpen: false,
+  treasuryAdjustDraft: { amount: "", cat: "enfants" },
+  syncCode: localStorage.getItem("sync-code") || "", syncActive: false, syncStatus: "", syncPanelOpen: false, applyingRemote: false,
+  formType: "charge", freq: "ponctuelle", epargneFreq: "ponctuelle",
+  epargneFormContext: "epargne", epargnePanelContext: "epargne",
+  saving: false,
+  draft: { label: "", amount: "", date: todayISO(), day: "1" },
+  epargneDraft: { categorie: "", type: "versement", amount: "", date: todayISO(), day: "1", startMonth: todayISO().slice(0, 7), endMonth: "" },
+  manageCategoriesOpen: false, newCategoryName: "", newCategoryEmoji: "", categoryType: "savings",
+};
+
+function getDefaultSavingsCats() {
+  const defaults = getDefaultSavings();
+  return defaults.reduce((acc, cat) => { acc[cat] = { emoji: "" }; return acc; }, {});
+}
+function getDefaultAccountCats() {
+  const defaults = getDefaultAccounts();
+  return defaults.reduce((acc, cat) => { acc[cat] = { emoji: "" }; return acc; }, {});
+}
+function getAllSavingsCats() {
+  return { ...getDefaultSavingsCats(), ...state.customCategories.savings };
+}
+function getAllAccountCats() {
+  return { ...getDefaultAccountCats(), ...state.customCategories.accounts };
+}
+
+function compteBalance(cat, cursor, mouvements, recurrents) {
+  let total = mouvements
+    .filter((m) => m.categorie === cat && monthKey(m.date) <= cursor)
+    .reduce((s, m) => s + (m.type === "versement" ? m.amount : -m.amount), 0);
+  recurrents.filter((r) => r.categorie === cat).forEach((r) => {
+    const end = r.endMonth && r.endMonth < cursor ? r.endMonth : cursor;
+    let m = r.startMonth, guard = 0;
+    while (m <= end && guard < 600) {
+      if (!(r.excluded && r.excluded[m])) total += r.type === "versement" ? r.amount : -r.amount;
+      m = addMonths(m, 1);
+      guard++;
+    }
+  });
+  return total;
+}
+
+function futureDateISO(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function monthRange(startMonth, endMonth) {
+  const out = [];
+  let m = startMonth, guard = 0;
+  while (m <= endMonth && guard < 24) { out.push(m); m = addMonths(m, 1); guard++; }
+  return out;
+}
+function splitLedger(ops, startBalance, today) {
+  ops.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  let balance = startBalance;
+  const past = [], future = [];
+  ops.forEach((op) => {
+    balance += op.amount;
+    const withBalance = { ...op, balance };
+    (op.date <= today ? past : future).push(withBalance);
+  });
+  const soldeActuel = past.length ? past[past.length - 1].balance : startBalance;
+  return { past: [...past].reverse(), future, soldeActuel };
+}
+function buildGlobalLedger() {
+  const today = todayISO();
+  const monthStart = today.slice(0, 7) + "-01";
+  const endDate = futureDateISO(90);
+  const months = monthRange(monthKey(monthStart), monthKey(endDate));
+  const ops = [];
+  state.oneOff.forEach((e) => {
+    if (e.date >= monthStart && e.date <= endDate) {
+      ops.push({ date: e.date, label: e.label, amount: e.type === "revenu" ? e.amount : -e.amount, recurring: false, adjustment: !!e.adjustment });
+    }
+  });
+  months.forEach((mo) => {
+    state.recurring.forEach((r) => {
+      if (r.excluded && r.excluded[mo]) return;
+      if (mo >= r.startMonth && (!r.endMonth || mo <= r.endMonth)) {
+        const [y, m] = mo.split("-").map(Number);
+        const date = `${mo}-${String(Math.min(r.day, daysInMonth(y, m))).padStart(2, "0")}`;
+        if (date >= monthStart && date <= endDate) {
+          const amt = r.overrides && r.overrides[mo] !== undefined ? r.overrides[mo] : r.amount;
+          ops.push({ date, label: r.label, amount: r.type === "revenu" ? amt : -amt, recurring: true, templateId: r.id, month: mo, kind: "global" });
+        }
+      }
+    });
+  });
+  return splitLedger(ops, computeCarryover(monthKey(monthStart), state.oneOff, state.recurring), today);
+}
+function buildCompteLedger(context) {
+  const savingsCats = Object.keys(getAllSavingsCats());
+  const accountCats = Object.keys(getAllAccountCats());
+  const cats = context === "epargne" ? savingsCats : context === "courses" ? accountCats : [];
+  const today = todayISO();
+  const monthStart = today.slice(0, 7) + "-01";
+  const endDate = futureDateISO(90);
+  const prevMonth = addMonths(monthKey(monthStart), -1);
+  const months = monthRange(monthKey(monthStart), monthKey(endDate));
+  let startBalance = 0;
+  cats.forEach((cat) => { startBalance += compteBalance(cat, prevMonth, state.epargneMouvements, state.epargneRecurrents); });
+  const ops = [];
+  state.epargneMouvements.forEach((mv) => {
+    if (cats.includes(mv.categorie) && mv.date >= monthStart && mv.date <= endDate) {
+      ops.push({ date: mv.date, label: `${mv.categorie} — ${mv.type === "versement" ? t("deposit") : t("withdrawal")}`, amount: mv.type === "versement" ? mv.amount : -mv.amount, recurring: false, adjustment: !!mv.adjustment });
+    }
+  });
+  months.forEach((mo) => {
+    state.epargneRecurrents.forEach((r) => {
+      if (r.excluded && r.excluded[mo]) return;
+      if (cats.includes(r.categorie) && mo >= r.startMonth && (!r.endMonth || mo <= r.endMonth)) {
+        const [y, m] = mo.split("-").map(Number);
+        const date = `${mo}-${String(Math.min(r.day, daysInMonth(y, m))).padStart(2, "0")}`;
+        if (date >= monthStart && date <= endDate) {
+          ops.push({ date, label: `${r.categorie} — ${r.type === "versement" ? t("deposit") : t("withdrawal")} (${t("recurring_label")})`, amount: r.type === "versement" ? r.amount : -r.amount, recurring: true, templateId: r.id, month: mo, kind: "epargne" });
+        }
+      }
+    });
+  });
+  return splitLedger(ops, startBalance, today);
+}
+
+function loadData() {
+  try {
+    const res = storage.get("finance-data");
+    if (res && res.value) {
+      const parsed = JSON.parse(res.value);
+      state.oneOff = parsed.entries || [];
+      state.recurring = parsed.recurring || [];
+      state.epargneMouvements = parsed.epargneMouvements || [];
+      state.epargneRecurrents = parsed.epargneRecurrents || [];
+      state.reportManuel = parsed.reportManuel || {};
+      state.customCategories = parsed.customCategories || { savings: {}, accounts: {} };
+    }
+  } catch (e) {}
+  state.loading = false;
+}
+function persist() {
+  state.saving = true;
+  try { storage.set("finance-data", JSON.stringify({ entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, epargneRecurrents: state.epargneRecurrents, reportManuel: state.reportManuel, customCategories: state.customCategories })); }
+  catch (e) { state.error = t("save_impossible"); }
+  state.saving = false;
+  if (state.syncActive && syncDocRef && !state.applyingRemote) {
+    syncDocRef.set(buildSyncPayload()).catch(() => { state.syncStatus = state.language === "fr" ? "Erreur de synchronisation" : "Sync error"; });
+  }
+}
+
+// ---------- render ----------
+function logoSVG() {
+  return `<svg width="26" height="26" viewBox="0 0 40 40" style="flex-shrink:0">
+    <g transform="translate(20 21)">
+      <path d="M0,-4 C-9,-13 -8,-24 0,-29 C8,-24 9,-13 0,-4 Z" fill="hsl(300 55% 68%)" />
+      <path d="M0,-3 C-9,3 -17,1 -19,-8 C-11,-13 -3,-10 0,-3 Z" fill="hsl(315 60% 66%)" />
+      <path d="M0,-3 C9,3 17,1 19,-8 C11,-13 3,-10 0,-3 Z" fill="hsl(315 60% 66%)" />
+      <path d="M0,-2 C-7,3 -12,10 -8,17 C-1,15 3,8 0,-2 Z" fill="hsl(285 45% 64%)" />
+      <path d="M0,-2 C7,3 12,10 8,17 C1,15 -3,8 0,-2 Z" fill="hsl(285 45% 64%)" />
+      <path d="M0,0 C-9,4 -11,13 -5,18 C-2,21 2,21 5,18 C11,13 9,4 0,0 Z" fill="hsl(322 60% 55%)" />
+      <ellipse cx="0" cy="9" rx="3.4" ry="5" fill="hsl(45 60% 68%)" />
+    </g>
+  </svg>`;
+}
+
+function headerHTML() {
+  return `
+  <div class="row between" style="margin-bottom:4px">
+    <div class="row" style="gap:8px">
+      ${logoSVG()}
+      <div>
+        <h1 class="display" style="font-size:24px; font-weight:600; margin:0">${t("app_name")}</h1>
+        <p class="strachberry-badge" style="margin:2px 0 0">${t("by_strachberry")}</p>
+      </div>
+    </div>
+    <button class="lang-btn ${state.language === "fr" ? "active" : ""}" data-action="set-language" data-lang="fr">🇫🇷</button>
+    <button class="lang-btn ${state.language === "en" ? "active" : ""}" data-action="set-language" data-lang="en">🇬🇧</button>
+  </div>
+  <div class="row between" style="margin-bottom:20px">
+    <p class="muted" style="font-size:12px; font-style:italic; margin:0">${state.saving ? t("watering") : t("tagline")}</p>
+    <div class="row" style="gap:12px">
+      <button class="link-btn" data-action="open-recurring">${t("recurring_btn")}</button>
+      <button class="link-btn" data-action="open-treasury">${t("treasury_btn")}</button>
+      <button class="link-btn" data-action="open-sync-panel">${state.syncActive ? "🔄 " : ""}${t("sync_btn")}</button>
+      <button class="link-btn" data-action="export-data">${t("export_btn")}</button>
+      <button class="link-btn" data-action="trigger-import">${t("import_btn")}</button>
+      <button class="link-btn" data-action="open-manage-categories">${t("manage_categories")}</button>
+    </div>
+  </div>`;
+}
+
+function monthNavHTML() {
+  const { full } = monthLabelOf(state.cursor);
+  return `
+  <div class="row between" style="margin-bottom:12px">
+    <button class="navbtn" data-action="prev-month">‹</button>
+    <span style="font-size:14px; font-weight:500">${full}</span>
+    <button class="navbtn" data-action="next-month">›</button>
+  </div>`;
+}
+
+function monthStripHTML() {
+  let chips = "";
+  for (let i = -3; i <= 2; i++) {
+    const c = addMonths(state.cursor, i);
+    const d = computeMonth(c, state.oneOff, state.recurring);
+    const lbl = monthLabelOf(c);
+    const active = c === state.cursor;
+    chips += `<button class="month-chip ${active ? "active" : ""}" data-action="goto-month" data-cursor="${c}">
+      <span class="muted" style="font-size:10px; text-transform:uppercase">${lbl.abr}</span>
+      ${budSVG(d.tauxCharges, d.all.length > 0, d.revenus > 0)}
+    </button>`;
+  }
+  return `<div class="month-strip">${chips}</div>`;
+}
+
+function heroCardHTML(monthData) {
+  const health = healthFactor(monthData.tauxCharges, monthData.revenus > 0);
+  const soldeFinDeMois = monthData.report + monthData.epargne;
+  return `
+  <div class="card" style="display:flex; flex-direction:column; align-items:center; margin-bottom:20px">
+    ${heroFlowerSVG(monthData)}
+    <div style="width:100%; margin-top:8px">
+      <div class="statline"><span class="muted" style="font-size:14px">${t("daily_income")}</span><span style="color:var(--stem); font-weight:600">${fmtEUR(monthData.revenus)}</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">${t("daily_expenses")}</span><span style="color:var(--danger); font-weight:600">${fmtEUR(monthData.charges)}</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">${t("previous_balance")}</span><span style="font-weight:600; color:${monthData.report < 0 ? "var(--danger)" : "var(--ink)"}">${fmtEUR(monthData.report)}</span></div>
+      <div class="statline"><span class="muted" style="font-size:14px">${t("available_budget")}</span><span style="font-weight:600; color:${monthData.epargne < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(monthData.epargne)}</span></div>
+      <div class="row between" style="padding-top:8px; border-top:1px solid var(--rule); margin-top:8px">
+        <span class="muted" style="font-size:14px">${t("estimated_balance")}</span>
+        <span style="font-size:18px; font-weight:700; color:${soldeFinDeMois < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(soldeFinDeMois)}</span>
+      </div>
+    </div>
+    <p class="muted" style="font-size:11px; margin:10px 0 0; text-align:center">${t("auto_report")}</p>
+    ${health < 0.4 ? `<p style="font-size:12px; margin-top:8px; text-align:center; color:var(--danger)">${t("difficulty")}</p>` : ""}
+  </div>`;
+}
+
+function comptesCardHTML(context) {
+  const cats = context === "epargne" ? Object.keys(getAllSavingsCats()) : Object.keys(getAllAccountCats());
+  const contextLabel = context === "epargne" ? t("savings_title") : t("accounts_title");
+  const historyLabel = context === "epargne" ? t("savings_history") : t("accounts_history");
+  const rows = cats.map((cat, i) => {
+    const balance = compteBalance(cat, state.cursor, state.epargneMouvements, state.epargneRecurrents);
+    const isLast = i === cats.length - 1;
+    const emoji = (context === "epargne" ? state.customCategories.savings[cat]?.emoji : state.customCategories.accounts[cat]?.emoji) || "";
+    return `<div class="${isLast ? "row between" : "statline"}" style="${isLast ? "padding-top:8px" : ""}">
+      <span class="row muted" style="font-size:14px; gap:6px">${emoji || miniFlowerSVG(CAT_HUE[cat] || 120, 1, 9)} ${cat}</span>
+      <span style="font-weight:600; color:${balance < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(balance)}</span>
+    </div>`;
+  }).join("");
+  return `
+  <div class="card" style="margin-bottom:20px">
+    <div class="row between" style="margin-bottom:12px">
+      <div class="eyebrow" style="margin-bottom:0">${contextLabel}</div>
+      <div class="row" style="gap:14px">
+        <button class="link-btn" data-action="open-epargne-panel" data-ctx="${context}">${historyLabel}</button>
+        <button class="icon-btn" data-action="open-epargne-form" data-ctx="${context}" style="font-size:16px; font-weight:700">+</button>
+      </div>
+    </div>
+    ${rows}
+  </div>`;
+}
+
+function epargneFormSheetHTML() {
+  if (!state.epargneFormOpen) return "";
+  const savingsCats = Object.keys(getAllSavingsCats());
+  const accountCats = Object.keys(getAllAccountCats());
+  const cats = state.epargneFormContext === "epargne" ? savingsCats : accountCats;
+  const contextLabel = state.epargneFormContext === "epargne" ? t("savings_title") : t("accounts_title");
+  const movementLabel = state.epargneFormContext === "epargne" ? t("savings_title") : t("accounts_title");
+  if (state.epargneDraft.categorie === "") state.epargneDraft.categorie = cats[0] || "default";
+  
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-epargne-form">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">${t("new_movement")} — ${contextLabel}</h2>
+        <button class="icon-btn" data-action="close-epargne-form" style="font-size:20px">✕</button>
+      </div>
+      ${cats.length > 1 ? `
+      <div class="segmented">
+        ${cats.map((cat) => {
+          const emoji = (state.epargneFormContext === "epargne" ? state.customCategories.savings[cat]?.emoji : state.customCategories.accounts[cat]?.emoji) || "";
+          return `<button class="${state.epargneDraft.categorie === cat ? "active-gold" : ""}" style="display:flex; align-items:center; justify-content:center; gap:4px" data-action="set-epargne-cat" data-cat="${cat}">${emoji || miniFlowerSVG(CAT_HUE[cat] || 120, 1, 7)} ${cat}</button>`;
+        }).join("")}
+      </div>` : ""}
+      <div class="segmented">
+        <button class="${state.epargneDraft.type === "versement" ? "active-revenu" : ""}" data-action="set-epargne-type" data-type="versement">${t("deposit")}</button>
+        <button class="${state.epargneDraft.type === "retrait" ? "active-charge" : ""}" data-action="set-epargne-type" data-type="retrait">${t("withdrawal")}</button>
+      </div>
+      <div class="segmented">
+        <button class="${state.epargneFreq === "ponctuelle" ? "active-gold" : ""}" data-action="set-epargne-freq" data-freq="ponctuelle">${t("oneoff")}</button>
+        <button class="${state.epargneFreq === "recurrente" ? "active-gold" : ""}" data-action="set-epargne-freq" data-freq="recurrente">${t("recurring")}</button>
+      </div>
+      <label class="field-label">${t("amount")}</label>
+      <input id="f-epargne-amount" inputmode="decimal" placeholder="0" />
+      ${state.epargneFreq === "ponctuelle" ? `
+      <label class="field-label">${t("date")}</label>
+      <input id="f-epargne-date" type="date" />
+      ` : `
+      <label class="field-label">${t("day")}</label>
+      <input id="f-epargne-day" inputmode="numeric" placeholder="1-31" />
+      <div class="row" style="gap:12px">
+        <div style="flex:1"><label class="field-label">${t("start_date")}</label><input id="f-epargne-startmonth" type="month" /></div>
+        <div style="flex:1"><label class="field-label">${t("end_date")}</label><input id="f-epargne-endmonth" type="month" /></div>
+      </div>
+      `}
+      <button class="btn-primary" data-action="add-epargne">${t("add_btn")}</button>
+    </div>
+  </div>`;
+}
+
+function epargnePanelHTML() {
+  if (!state.epargnePanelOpen) return "";
+  const savingsCats = Object.keys(getAllSavingsCats());
+  const accountCats = Object.keys(getAllAccountCats());
+  const cats = state.epargnePanelContext === "epargne" ? savingsCats : accountCats;
+  const recurrents = state.epargneRecurrents.filter((r) => cats.includes(r.categorie));
+  const mvts = state.epargneMouvements.filter((m) => cats.includes(m.categorie)).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const contextLabel = state.epargnePanelContext === "epargne" ? t("savings_title") : t("accounts_title");
+  let recBody;
+  if (recurrents.length === 0) {
+    recBody = `<p class="muted" style="font-size:13px; padding:8px 0; font-style:italic">${t("no_recurring_movements")}</p>`;
+  } else {
+    recBody = recurrents.map((r) => {
+      const emoji = (state.epargnePanelContext === "epargne" ? state.customCategories.savings[r.categorie]?.emoji : state.customCategories.accounts[r.categorie]?.emoji) || "";
+      return `
+      <div class="entry-row" style="flex-wrap:wrap">
+        <div style="min-width:0; padding-right:8px">
+          <div style="display:flex; align-items:center; gap:6px; font-size:14px">${emoji || miniFlowerSVG(CAT_HUE[r.categorie] || 120, 1, 8)} ${r.categorie}</div>
+          <div class="muted" style="font-size:10px">${r.type === "versement" ? t("deposit") : t("withdrawal")} · ${t("edit_day")} ${r.day} · ${t("start")} ${monthLabelOf(r.startMonth).full}${r.endMonth ? ` · ${t("end")} ${monthLabelOf(r.endMonth).full}` : ""}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; color:${r.type === "versement" ? "var(--stem)" : "var(--danger)"}">${r.type === "versement" ? "+" : "−"}${fmtEUR(r.amount)}</span>
+          <button class="icon-btn" data-action="remove-epargne-recurrent" data-id="${r.id}">🗑</button>
+        </div>
+      </div>`}).join("");
+  }
+  let body;
+  if (mvts.length === 0) {
+    body = `<p class="muted" style="font-size:14px; padding:16px 0; text-align:center; font-style:italic">${t("no_movements")}</p>`;
+  } else {
+    body = mvts.map((m) => {
+      const emoji = (state.epargnePanelContext === "epargne" ? state.customCategories.savings[m.categorie]?.emoji : state.customCategories.accounts[m.categorie]?.emoji) || "";
+      return `
+      <div class="entry-row">
+        <div style="min-width:0; padding-right:8px">
+          <div style="display:flex; align-items:center; gap:6px; font-size:14px; ${m.adjustment ? "font-style:italic; color:var(--ink-soft)" : ""}">${emoji || miniFlowerSVG(CAT_HUE[m.categorie] || 120, 1, 8)} ${m.categorie}${m.adjustment ? ` — ${t("adjustment")}` : ""}</div>
+          <div class="muted" style="font-size:10px">${m.type === "versement" ? t("deposit") : t("withdrawal")} · ${m.date.slice(8, 10)}/${m.date.slice(5, 7)}/${m.date.slice(0, 4)}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; font-style:${m.adjustment ? "italic" : "normal"}; color:${m.adjustment ? "var(--gold)" : m.type === "versement" ? "var(--stem)" : "var(--danger)"}">${m.type === "versement" ? "+" : "−"}${fmtEUR(m.amount)}</span>
+          <button class="icon-btn" data-action="remove-epargne" data-id="${m.id}">🗑</button>
+        </div>
+      </div>`}).join("");
+  }
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-epargne-panel">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">${t("entries_header")} — ${contextLabel}</h2>
+        <button class="icon-btn" data-action="close-epargne-panel" style="font-size:20px">✕</button>
+      </div>
+      <div class="eyebrow">${t("recurring_header")}</div>
+      ${recBody}
+      <div class="eyebrow" style="margin-top:14px">${t("oneoff_header")}</div>
+      ${body}
+    </div>
+  </div>`;
+}
+
+function categoryCardHTML(monthData) {
+  const map = {};
+  monthData.all.filter((e) => e.type === "charge").forEach((e) => { map[e.category] = (map[e.category] || 0) + e.amount; });
+  const byCategory = Object.entries(map).sort((a, b) => b[1] - a[1]);
+  if (byCategory.length === 0) return "";
+  const maxCat = byCategory[0][1];
+  const health = healthFactor(monthData.tauxCharges, monthData.revenus > 0);
+  let rows = "";
+  byCategory.forEach(([cat, amt]) => {
+    const hue = CAT_HUE[cat] || 0;
+    rows += `
+    <div class="row" style="gap:12px; margin-bottom:12px">
+      ${miniFlowerSVG(hue, health, 16)}
+      <div style="flex:1; min-width:0">
+        <div class="row between" style="font-size:12px; margin-bottom:4px"><span>${esc(cat)}</span><span>${fmtEUR(amt)}</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${(amt / maxCat) * 100}%; background:hsl(${hue} ${20 + health * 60}% ${65 - health * 15}%)"></div></div>
+      </div>
+    </div>`;
+  });
+  return `<div class="card" style="margin-bottom:20px"><div class="eyebrow">${t("category_garden")}</div>${rows}</div>`;
+}
+
+function entriesCardHTML(monthData) {
+  const entries = [...monthData.all].sort((a, b) => (a.date < b.date ? 1 : -1));
+  let body;
+  if (entries.length === 0) {
+    body = `<p class="muted" style="font-size:14px; padding:24px 0; text-align:center; font-style:italic">${t("no_entries")}</p>`;
+  } else {
+    body = entries.map((e) => `
+      <div class="entry-row">
+        <div style="min-width:0; padding-right:8px">
+          <div class="row" style="gap:6px">
+            <span style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; ${e.adjustment ? "font-style:italic; color:var(--ink-soft)" : ""}">${esc(e.label)}</span>
+            ${e.recurring ? `<span style="color:var(--gold); font-size:12px">⟳</span>` : ""}
+            ${e.overridden ? `<span class="muted" style="font-size:9px; border:1px solid var(--rule); border-radius:999px; padding:1px 6px">${t("modified_this_month")}</span>` : ""}
+            ${e.adjustment ? `<span class="muted" style="font-size:9px; border:1px solid var(--rule); border-radius:999px; padding:1px 6px; font-style:italic">${t("adjustment")}</span>` : ""}
+          </div>
+          <div class="muted" style="font-size:10px">${esc(e.category)} · ${e.date.slice(8, 10)}/${e.date.slice(5, 7)}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; font-style:${e.adjustment ? "italic" : "normal"}; color:${e.adjustment ? "var(--gold)" : e.type === "revenu" ? "var(--stem)" : "var(--danger)"}">${e.type === "revenu" ? "+" : "−"}${fmtEUR(e.amount)}</span>
+          ${e.adjustment
+            ? `<button class="icon-btn" data-action="remove-oneoff" data-id="${e.id}">🗑</button>`
+            : e.recurring
+              ? `<button class="icon-btn" data-action="open-amount-override" data-id="${e.templateId}" title="Montant exceptionnel ce mois-ci">✎</button>`
+              : `<button class="icon-btn" data-action="remove-oneoff" data-id="${e.id}">🗑</button>`}
+        </div>
+      </div>`).join("");
+  }
+  return `<div class="card">
+    <div class="eyebrow">${t("entries_header")}</div>
+    ${body}
+  </div>
+  ${state.error ? `<p style="text-align:center; font-size:12px; margin-top:16px; color:var(--danger)">${esc(state.error)}</p>` : ""}`;
+}
+
+function formSheetHTML() {
+  if (!state.formOpen) return "";
+  const { full } = monthLabelOf(state.cursor);
+  const cats = state.formType === "revenu" ? getRevenueCats() : getChargeCats();
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-form">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">${t("new_entry")}</h2>
+        <button class="icon-btn" data-action="close-form" style="font-size:20px">✕</button>
+      </div>
+      <div class="segmented">
+        <button class="${state.formType === "revenu" ? "active-revenu" : ""}" data-action="set-type" data-type="revenu">${t("income")}</button>
+        <button class="${state.formType === "charge" ? "active-charge" : ""}" data-action="set-type" data-type="charge">${t("expense")}</button>
+      </div>
+      <div class="segmented">
+        <button class="${state.freq === "ponctuelle" ? "active-gold" : ""}" data-action="set-freq" data-freq="ponctuelle">${t("oneoff")}</button>
+        <button class="${state.freq === "recurrente" ? "active-gold" : ""}" data-action="set-freq" data-freq="recurrente">${t("recurring")}</button>
+      </div>
+      <label class="field-label">${t("label")}</label>
+      <input id="f-label" placeholder="${state.formType === "revenu" ? "Salary" : "Rent"}" />
+      <label class="field-label">${t("category")}</label>
+      <select id="f-cat">${cats.map((c) => `<option value="${c}">${c}</option>`).join("")}</select>
+      <div class="row" style="gap:12px">
+        <div style="flex:1">
+          <label class="field-label">${t("amount")}</label>
+          <input id="f-amount" inputmode="decimal" placeholder="0" />
+        </div>
+        <div style="flex:1">
+          ${state.freq === "ponctuelle"
+            ? `<label class="field-label">${t("date")}</label><input id="f-date" type="date" />`
+            : `<label class="field-label">${t("day")}</label><input id="f-day" inputmode="numeric" placeholder="1-31" />`}
+        </div>
+      </div>
+      ${state.freq === "recurrente" ? `
+      <label class="field-label">${t("start_date")}</label>
+      <input id="f-startmonth" type="month" />
+      <label class="field-label">${t("end_date")}</label>
+      <input id="f-endmonth" type="month" />
+      ` : ""}
+      <button class="btn-primary" data-action="add-entry">${t("add_btn")}</button>
+    </div>
+  </div>`;
+}
+
+function recurringSheetHTML() {
+  if (!state.recurringPanelOpen) return "";
+  let body;
+  if (state.recurring.length === 0) {
+    body = `<p class="muted" style="font-size:14px; padding:16px 0; text-align:center; font-style:italic">${t("no_recurring")}</p>`;
+  } else {
+    body = state.recurring.map((r) => `
+      <div class="entry-row" style="flex-wrap:wrap">
+        <div style="min-width:0; padding-right:8px">
+          <div style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${esc(r.label)}</div>
+          <div class="muted" style="font-size:10px">${esc(r.category)} · ${t("edit_day")} ${r.day} · ${t("start")} ${monthLabelOf(r.startMonth).full}${r.endMonth ? ` · ${t("end")} ${monthLabelOf(r.endMonth).full}` : ""}</div>
+        </div>
+        <div class="row" style="gap:8px; flex-shrink:0">
+          <span style="font-size:14px; font-weight:500; color:${r.type === "revenu" ? "var(--stem)" : "var(--danger)"}">${r.type === "revenu" ? "+" : "−"}${fmtEUR(r.amount)}</span>
+          <button class="icon-btn" data-action="remove-recurring" data-id="${r.id}">🗑</button>
+        </div>
+        <div class="row" style="gap:6px; width:100%; margin-top:6px; flex-wrap:wrap">
+          <label class="field-label" style="margin:0; flex-shrink:0">${t("edit_day")}</label>
+          <input type="number" min="1" max="31" class="recurring-day-input" data-id="${r.id}" value="${r.day}" style="margin-bottom:0; padding:5px 8px; font-size:12px; width:56px" />
+          <label class="field-label" style="margin:0; flex-shrink:0">${t("start")}:</label>
+          <input type="month" class="recurring-start-input" data-id="${r.id}" value="${r.startMonth}" style="margin-bottom:0; padding:5px 8px; font-size:12px; width:auto" />
+          <label class="field-label" style="margin:0; flex-shrink:0">${t("end")}:</label>
+          <input type="month" class="recurring-end-input" data-id="${r.id}" value="${r.endMonth || ""}" style="margin-bottom:0; padding:5px 8px; font-size:12px; width:auto" />
+          ${r.endMonth ? `<button class="icon-btn" data-action="clear-end-month" data-id="${r.id}" style="font-size:11px; text-decoration:underline">${t("remove_end")}</button>` : ""}
+        </div>
+      </div>`).join("");
+  }
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-recurring">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">${t("edit_recurring")}</h2>
+        <button class="icon-btn" data-action="close-recurring" style="font-size:20px">✕</button>
+      </div>
+      ${body}
+    </div>
+  </div>`;
+}
+
+function amountOverrideSheetHTML() {
+  if (!state.overrideOpen) return "";
+  const r = state.recurring.find((x) => x.id === state.overrideTemplateId);
+  if (!r) return "";
+  const hasOverride = r.overrides && r.overrides[state.cursor] !== undefined;
+  const { full } = monthLabelOf(state.cursor);
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-amount-override">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">${t("override_title")}</h2>
+        <button class="icon-btn" data-action="close-amount-override" style="font-size:20px">✕</button>
+      </div>
+      <p class="muted" style="font-size:13px; margin:0 0 14px">${esc(r.label)} — ${t("override_text")}${fmtEUR(r.amount)}. ${t("override_text")}${full}${t("without_touching")}</p>
+      <label class="field-label">${t("amount_this_month")}${full} (€)</label>
+      <input id="f-override-amount" inputmode="decimal" placeholder="0" />
+      <button class="btn-primary" data-action="save-amount-override">${t("save_this_month")}</button>
+      ${hasOverride ? `<button class="link-btn" data-action="clear-amount-override" style="display:block; text-align:center; margin:14px auto 0">${t("back_to_normal")}</button>` : ""}
+    </div>
+  </div>`;
+}
+
+function treasurySheetHTML() {
+  if (!state.treasuryOpen) return "";
+  const ctx = state.treasuryContext;
+  const ledger = ctx === "global" ? buildGlobalLedger() : buildCompteLedger(ctx);
+  const ctxTitle = ctx === "global" ? t("treasury_global") : ctx === "epargne" ? t("treasury_savings") : t("treasury_accounts");
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-treasury">
+    <div class="sheet" style="max-height:94vh">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">${t("treasury_title")}</h2>
+        <button class="icon-btn" data-action="close-treasury" style="font-size:20px">✕</button>
+      </div>
+      <div class="segmented">
+        <button class="${ctx === "global" ? "active-gold" : ""}" data-action="set-treasury-ctx" data-ctx="global">${t("treasury_global")}</button>
+        <button class="${ctx === "epargne" ? "active-gold" : ""}" data-action="set-treasury-ctx" data-ctx="epargne">${t("treasury_savings")}</button>
+        <button class="${ctx === "courses" ? "active-gold" : ""}" data-action="set-treasury-ctx" data-ctx="courses">${t("treasury_accounts")}</button>
+      </div>
+      <div class="card" style="margin-bottom:16px; padding:16px; background:var(--ok-soft)">
+        <div class="row between">
+          <span class="muted" style="font-size:13px">${t("treasury_current_balance")} — ${ctxTitle}</span>
+          <span style="font-size:20px; font-weight:700; color:${ledger.soldeActuel < 0 ? "var(--danger)" : "var(--stem)"}">${fmtEUR(ledger.soldeActuel)}</span>
+        </div>
+        ${!state.treasuryAdjustOpen
+          ? `<button class="link-btn" data-action="toggle-treasury-adjust" style="margin-top:10px">${t("update_balance")}</button>`
+          : `
+          <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--rule)">
+            <p class="muted" style="font-size:11px; margin:0 0 10px">${t("expected_vs_real")} ${fmtEUR(ledger.soldeActuel)}. ${t("real_balance_prompt")}</p>
+            ${ctx === "epargne" ? `
+            <label class="field-label">${t("account_to_adjust")}</label>
+            <select id="f-treasury-adjust-cat">
+              ${Object.keys(getAllSavingsCats()).map((cat) => `<option value="${cat}" ${state.treasuryAdjustDraft.cat === cat ? "selected" : ""}>${cat}</option>`).join("")}
+            </select>` : ""}
+            <label class="field-label">${t("real_balance")} (€)</label>
+            <input id="f-treasury-adjust-amount" inputmode="decimal" placeholder="0" />
+            <div class="row" style="gap:10px">
+              <button class="btn-primary" data-action="confirm-treasury-adjust" style="flex:1">${t("validate")}</button>
+              <button class="link-btn" data-action="toggle-treasury-adjust">${t("cancel")}</button>
+            </div>
+          </div>`}
+      </div>
+      <div class="eyebrow">${t("future_operations")}</div>
+      ${ledger.future.length === 0 ? `<p class="muted" style="font-size:13px; padding:6px 0; font-style:italic">${t("nothing_scheduled")}</p>` : ledger.future.map((op) => treasuryOpRow(op, false)).join("")}
+      <div class="eyebrow" style="margin-top:16px">${t("past_operations")}</div>
+      ${ledger.past.length === 0 ? `<p class="muted" style="font-size:13px; padding:6px 0; font-style:italic">${t("no_operations")}</p>` : ledger.past.map((op) => treasuryOpRow(op, true)).join("")}
+    </div>
+  </div>`;
+}
+
+function treasuryOpRow(op, isPast) {
+  const [y, mo, d] = op.date.split("-");
+  const showCheckbox = isPast && op.recurring;
+  return `
+  <div class="entry-row">
+    ${showCheckbox ? `<input type="checkbox" class="treasury-exclude-checkbox" data-tid="${op.templateId}" data-month="${op.month}" data-kind="${op.kind}" checked style="width:auto; margin:0 10px 0 0; flex-shrink:0" title="${t("unchecked_means_cancelled")}" />` : ""}
+    <div style="min-width:0; padding-right:8px">
+      <div class="row" style="gap:6px">
+        <span style="font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; ${op.adjustment ? "font-style:italic; color:var(--ink-soft)" : ""}">${esc(op.label)}</span>
+        ${op.recurring ? `<span style="color:var(--gold); font-size:11px">⟳</span>` : ""}
+      </div>
+      <div class="muted" style="font-size:10px">${d}/${mo}/${y}</div>
+    </div>
+    <div style="text-align:right; flex-shrink:0">
+      <div style="font-size:13px; font-weight:500; font-style:${op.adjustment ? "italic" : "normal"}; color:${op.adjustment ? "var(--gold)" : op.amount < 0 ? "var(--danger)" : "var(--stem)"}">${op.amount >= 0 ? "+" : "−"}${fmtEUR(Math.abs(op.amount))}</div>
+      <div class="muted" style="font-size:10px">${state.language === "fr" ? "solde" : "balance"} ${fmtEUR(op.balance)}</div>
+    </div>
+  </div>`;
+}
+
+function syncPanelHTML() {
+  if (!state.syncPanelOpen) return "";
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-sync-panel">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">${t("sync_title")}</h2>
+        <button class="icon-btn" data-action="close-sync-panel" style="font-size:20px">✕</button>
+      </div>
+      ${state.syncActive ? `
+      <p class="muted" style="font-size:13px; margin:0 0 10px">${state.syncStatus === "Synchronized" || state.syncStatus === "Synchronisé" ? t("sync_active") : esc(state.syncStatus || "…")} ${t("sync_status")}</p>
+      <div class="card" style="text-align:center; padding:18px; margin-bottom:14px; background:var(--ok-soft)">
+        <span style="font-family:'Courier New',monospace; font-size:26px; font-weight:700; letter-spacing:4px">${esc(state.syncCode)}</span>
+      </div>
+      <button class="btn-primary" data-action="copy-sync-code">${t("copy_code")}</button>
+      <button class="link-btn" data-action="stop-sync" style="display:block; text-align:center; margin:16px auto 0">${t("disable_sync")}</button>
+      ` : `
+      <p class="muted" style="font-size:13px; margin:0 0 14px">${t("sync_desc")}</p>
+      <button class="btn-primary" data-action="generate-sync-code" style="margin-bottom:16px">${t("create_code")}</button>
+      <div style="text-align:center; margin:4px 0 12px; color:var(--ink-soft); font-size:12px">${t("or_join")}</div>
+      <label class="field-label">${t("join_with_code")}</label>
+      <input id="f-sync-code" placeholder="ex : A7K2P9" style="text-transform:uppercase" />
+      <button class="btn-primary" data-action="join-sync-code">${t("join_btn")}</button>
+      ${state.syncStatus ? `<p style="font-size:12px; text-align:center; margin-top:10px; color:var(--danger)">${esc(state.syncStatus)}</p>` : ""}
+      `}
+    </div>
+  </div>`;
+}
+
+function manageCategoriesHTML() {
+  if (!state.manageCategoriesOpen) return "";
+  const savingsCats = getAllSavingsCats();
+  const accountCats = getAllAccountCats();
+  return `
+  <div class="sheet-overlay" data-overlay-close="close-manage-categories">
+    <div class="sheet">
+      <div class="row between" style="margin-bottom:16px">
+        <h2 class="display" style="font-size:18px; font-weight:600; margin:0">${t("manage_categories")}</h2>
+        <button class="icon-btn" data-action="close-manage-categories" style="font-size:20px">✕</button>
+      </div>
+      
+      <div class="eyebrow">${t("custom_savings")}</div>
+      <div style="margin-bottom:16px">
+        ${Object.entries(savingsCats).map(([cat, data]) => `
+          <div class="row between" style="padding:8px 0; border-bottom:1px solid var(--rule)">
+            <span style="font-size:14px">${data.emoji || ""} ${cat}</span>
+            ${!["Enfants", "Couple", "Courses", "Children", "Partner", "Groceries"].includes(cat) ? `<button class="icon-btn" data-action="remove-custom-cat" data-type="savings" data-cat="${cat}">🗑</button>` : ""}
+          </div>
+        `).join("")}
+        <div style="margin-top:12px; padding:12px 0; border-top:1px solid var(--rule)">
+          <input id="f-new-savings-name" placeholder="${t("category_name")}" style="margin-bottom:8px" />
+          <input id="f-new-savings-emoji" placeholder="${t("category_emoji")}" maxlength="2" style="margin-bottom:8px" />
+          <button class="btn-primary" data-action="add-custom-cat" data-type="savings">${t("create_category")}</button>
+        </div>
+      </div>
+      
+      <div class="eyebrow">${t("custom_accounts")}</div>
+      <div>
+        ${Object.entries(accountCats).map(([cat, data]) => `
+          <div class="row between" style="padding:8px 0; border-bottom:1px solid var(--rule)">
+            <span style="font-size:14px">${data.emoji || ""} ${cat}</span>
+            ${!["Compte courant principal", "Main current account"].includes(cat) ? `<button class="icon-btn" data-action="remove-custom-cat" data-type="accounts" data-cat="${cat}">🗑</button>` : ""}
+          </div>
+        `).join("")}
+        <div style="margin-top:12px; padding:12px 0; border-top:1px solid var(--rule)">
+          <input id="f-new-accounts-name" placeholder="${t("category_name")}" style="margin-bottom:8px" />
+          <input id="f-new-accounts-emoji" placeholder="${t("category_emoji")}" maxlength="2" style="margin-bottom:8px" />
+          <button class="btn-primary" data-action="add-custom-cat" data-type="accounts">${t("create_category")}</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function render() {
+  const root = document.getElementById("root");
+  if (state.loading) {
+    root.innerHTML = `<div class="wrap"><div class="muted" style="text-align:center; padding:80px 0">${state.language === "fr" ? "Le jardin s'ouvre…" : "The garden is opening…"}</div></div>`;
+    return;
+  }
+  const monthData = computeMonth(state.cursor, state.oneOff, state.recurring);
+  monthData.report = computeCarryover(state.cursor, state.oneOff, state.recurring);
+  root.innerHTML = `
+    <div class="wrap">
+      ${headerHTML()}
+      ${monthNavHTML()}
+      ${monthStripHTML()}
+      ${heroCardHTML(monthData)}
+      ${comptesCardHTML("epargne")}
+      ${comptesCardHTML("courses")}
+      ${categoryCardHTML(monthData)}
+      ${entriesCardHTML(monthData)}
+    </div>
+    <button class="fab" data-action="open-form">+</button>
+    ${formSheetHTML()}
+    ${recurringSheetHTML()}
+    ${epargneFormSheetHTML()}
+    ${epargnePanelHTML()}
+    ${amountOverrideSheetHTML()}
+    ${treasurySheetHTML()}
+    ${syncPanelHTML()}
+    ${manageCategoriesHTML()}
+    <input id="import-file" type="file" accept="application/json" style="display:none" />
+  `;
+  if (state.formOpen) {
+    const l = document.getElementById("f-label"); if (l) l.value = state.draft.label;
+    const a = document.getElementById("f-amount"); if (a) a.value = state.draft.amount;
+    const d = document.getElementById("f-date"); if (d) d.value = state.draft.date;
+    const day = document.getElementById("f-day"); if (day) day.value = state.draft.day;
+    const startmonth = document.getElementById("f-startmonth"); if (startmonth) startmonth.value = state.draft.startMonth || state.cursor;
+    const endmonth = document.getElementById("f-endmonth"); if (endmonth) endmonth.value = state.draft.endMonth || "";
+    const cat = document.getElementById("f-cat"); if (cat) cat.value = state.draft.category || cat.value;
+  }
+  if (state.epargneFormOpen) {
+    const ea = document.getElementById("f-epargne-amount"); if (ea) ea.value = state.epargneDraft.amount;
+    const ed = document.getElementById("f-epargne-date"); if (ed) ed.value = state.epargneDraft.date;
+    const eday = document.getElementById("f-epargne-day"); if (eday) eday.value = state.epargneDraft.day;
+    const esm = document.getElementById("f-epargne-startmonth"); if (esm) esm.value = state.epargneDraft.startMonth || state.cursor;
+    const eem = document.getElementById("f-epargne-endmonth"); if (eem) eem.value = state.epargneDraft.endMonth || "";
+  }
+  if (state.overrideOpen) {
+    const oa = document.getElementById("f-override-amount"); if (oa) oa.value = state.overrideAmount;
+  }
+  if (state.treasuryAdjustOpen) {
+    const ta = document.getElementById("f-treasury-adjust-amount"); if (ta) ta.value = state.treasuryAdjustDraft.amount;
+    const tc = document.getElementById("f-treasury-adjust-cat"); if (tc) tc.value = state.treasuryAdjustDraft.cat;
+  }
+}
+
+function captureDraft() {
+  if (!state.formOpen) return;
+  const l = document.getElementById("f-label"); if (l) state.draft.label = l.value;
+  const a = document.getElementById("f-amount"); if (a) state.draft.amount = a.value;
+  const d = document.getElementById("f-date"); if (d) state.draft.date = d.value;
+  const day = document.getElementById("f-day"); if (day) state.draft.day = day.value;
+  const startmonth = document.getElementById("f-startmonth"); if (startmonth) state.draft.startMonth = startmonth.value;
+  const endmonth = document.getElementById("f-endmonth"); if (endmonth) state.draft.endMonth = endmonth.value;
+  const cat = document.getElementById("f-cat"); if (cat) state.draft.category = cat.value;
+}
+function captureEpargneDraft() {
+  if (!state.epargneFormOpen) return;
+  const ea = document.getElementById("f-epargne-amount"); if (ea) state.epargneDraft.amount = ea.value;
+  const ed = document.getElementById("f-epargne-date"); if (ed) state.epargneDraft.date = ed.value;
+  const eday = document.getElementById("f-epargne-day"); if (eday) state.epargneDraft.day = eday.value;
+  const esm = document.getElementById("f-epargne-startmonth"); if (esm) state.epargneDraft.startMonth = esm.value;
+  const eem = document.getElementById("f-epargne-endmonth"); if (eem) state.epargneDraft.endMonth = eem.value;
+}
+function captureTreasuryAdjustDraft() {
+  if (!state.treasuryAdjustOpen) return;
+  const ta = document.getElementById("f-treasury-adjust-amount"); if (ta) state.treasuryAdjustDraft.amount = ta.value;
+  const tc = document.getElementById("f-treasury-adjust-cat"); if (tc) state.treasuryAdjustDraft.cat = tc.value;
+}
+
+function update() { captureDraft(); render(); }
+
+// ---------- actions ----------
+function exportData() {
+  const payload = { exportedAt: new Date().toISOString(), entries: state.oneOff, recurring: state.recurring, epargneMouvements: state.epargneMouvements, epargneRecurrents: state.epargneRecurrents, reportManuel: state.reportManuel, customCategories: state.customCategories };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `budget-garden-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function handleImportFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      const importedEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
+      const importedRecurring = Array.isArray(parsed.recurring) ? parsed.recurring : [];
+      const importedEpargne = Array.isArray(parsed.epargneMouvements) ? parsed.epargneMouvements : [];
+      const importedEpargneRec = Array.isArray(parsed.epargneRecurrents) ? parsed.epargneRecurrents : [];
+      const existingIds = new Set(state.oneOff.map((x) => x.id));
+      const existingRecIds = new Set(state.recurring.map((x) => x.id));
+      const existingEpargneIds = new Set(state.epargneMouvements.map((x) => x.id));
+      const existingEpargneRecIds = new Set(state.epargneRecurrents.map((x) => x.id));
+      state.oneOff = [...state.oneOff, ...importedEntries.filter((x) => x && x.id && !existingIds.has(x.id))];
+      state.recurring = [...state.recurring, ...importedRecurring.filter((x) => x && x.id && !existingRecIds.has(x.id))];
+      state.epargneMouvements = [...state.epargneMouvements, ...importedEpargne.filter((x) => x && x.id && !existingEpargneIds.has(x.id))];
+      state.epargneRecurrents = [...state.epargneRecurrents, ...importedEpargneRec.filter((x) => x && x.id && !existingEpargneRecIds.has(x.id))];
+      if (parsed.reportManuel) state.reportManuel = { ...state.reportManuel, ...parsed.reportManuel };
+      if (parsed.customCategories) state.customCategories = { ...state.customCategories, ...parsed.customCategories };
+      persist();
+      state.error = null;
+    } catch (err) {
+      state.error = t("import_error");
+    }
+    update();
+  };
+  reader.readAsText(file);
+}
+
+document.addEventListener("click", (e) => {
+  if (e.target.classList && e.target.classList.contains("sheet-overlay")) {
+    const overlayAction = e.target.getAttribute("data-overlay-close");
+    if (overlayAction === "close-form") state.formOpen = false;
+    if (overlayAction === "close-recurring") state.recurringPanelOpen = false;
+    if (overlayAction === "close-epargne-form") state.epargneFormOpen = false;
+    if (overlayAction === "close-epargne-panel") state.epargnePanelOpen = false;
+    if (overlayAction === "close-treasury") state.treasuryOpen = false;
+    if (overlayAction === "close-sync-panel") state.syncPanelOpen = false;
+    if (overlayAction === "close-manage-categories") state.manageCategoriesOpen = false;
+    update();
+    return;
+  }
+  const btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  const action = btn.getAttribute("data-action");
+  switch (action) {
+    case "set-language": {
+      const lang = btn.getAttribute("data-lang");
+      state.language = lang;
+      localStorage.setItem("language", lang);
+      update();
+      break;
+    }
+    case "prev-month": state.cursor = addMonths(state.cursor, -1); update(); break;
+    case "next-month": state.cursor = addMonths(state.cursor, 1); update(); break;
+    case "goto-month": state.cursor = btn.getAttribute("data-cursor"); update(); break;
+    case "open-form":
+      state.formOpen = true;
+      state.draft = { label: "", amount: "", date: todayISO(), day: "1", startMonth: state.cursor, endMonth: "", category: getRevenueCats()[0] };
+      update();
+      break;
+    case "close-form": state.formOpen = false; update(); break;
+    case "open-recurring": state.recurringPanelOpen = true; update(); break;
+    case "close-recurring": state.recurringPanelOpen = false; update(); break;
+    case "set-type": {
+      captureDraft();
+      state.formType = btn.getAttribute("data-type");
+      state.draft.category = state.formType === "revenu" ? getRevenueCats()[0] : getChargeCats()[0];
+      render();
+      break;
+    }
+    case "set-freq": {
+      captureDraft();
+      state.freq = btn.getAttribute("data-freq");
+      render();
+      break;
+    }
+    case "add-entry": {
+      captureDraft();
+      const amt = parseFloat(String(state.draft.amount).replace(",", "."));
+      if (!state.draft.label || !state.draft.label.trim() || !amt || amt <= 0) return;
+      if (state.freq === "ponctuelle") {
+        state.oneOff.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, date: state.draft.date || todayISO() });
+      } else {
+        state.recurring.push({ id: uid(), type: state.formType, label: state.draft.label.trim(), category: state.draft.category, amount: Math.round(amt * 100) / 100, day: Math.max(1, Math.min(31, parseInt(state.draft.day, 10) || 1)), startMonth: state.draft.startMonth || state.cursor, endMonth: state.draft.endMonth || null });
+      }
+      persist();
+      state.formOpen = false;
+      update();
+      break;
+    }
+    case "remove-oneoff": {
+      const id = btn.getAttribute("data-id");
+      state.oneOff = state.oneOff.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "remove-recurring": {
+      const id = btn.getAttribute("data-id");
+      state.recurring = state.recurring.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "clear-end-month": {
+      const id = btn.getAttribute("data-id");
+      const r = state.recurring.find((x) => x.id === id);
+      if (r) r.endMonth = null;
+      persist();
+      update();
+      break;
+    }
+    case "open-amount-override": {
+      const id = btn.getAttribute("data-id");
+      const r = state.recurring.find((x) => x.id === id);
+      if (!r) return;
+      state.overrideOpen = true;
+      state.overrideTemplateId = id;
+      state.overrideAmount = (r.overrides && r.overrides[state.cursor] !== undefined) ? String(r.overrides[state.cursor]) : String(r.amount);
+      update();
+      break;
+    }
+    case "close-amount-override": state.overrideOpen = false; update(); break;
+    case "save-amount-override": {
+      const input = document.getElementById("f-override-amount");
+      const amt = parseFloat(String(input ? input.value : state.overrideAmount).replace(",", "."));
+      const r = state.recurring.find((x) => x.id === state.overrideTemplateId);
+      if (!r || !amt || amt <= 0) return;
+      if (!r.overrides) r.overrides = {};
+      r.overrides[state.cursor] = Math.round(amt * 100) / 100;
+      persist();
+      state.overrideOpen = false;
+      update();
+      break;
+    }
+    case "clear-amount-override": {
+      const r = state.recurring.find((x) => x.id === state.overrideTemplateId);
+      if (r && r.overrides) delete r.overrides[state.cursor];
+      persist();
+      state.overrideOpen = false;
+      update();
+      break;
+    }
+    case "open-treasury": state.treasuryOpen = true; update(); break;
+    case "close-treasury": state.treasuryOpen = false; update(); break;
+    case "set-treasury-ctx": state.treasuryContext = btn.getAttribute("data-ctx"); update(); break;
+    case "open-sync-panel": state.syncPanelOpen = true; update(); break;
+    case "close-sync-panel": state.syncPanelOpen = false; update(); break;
+    case "generate-sync-code": startSync(genSyncCode()); break;
+    case "join-sync-code": {
+      const input = document.getElementById("f-sync-code");
+      const code = input ? input.value.trim().toUpperCase() : "";
+      if (!code) return;
+      startSync(code);
+      break;
+    }
+    case "copy-sync-code": {
+      if (navigator.clipboard) navigator.clipboard.writeText(state.syncCode).catch(() => {});
+      break;
+    }
+    case "stop-sync": stopSync(); break;
+    case "toggle-treasury-adjust": {
+      captureTreasuryAdjustDraft();
+      if (!state.treasuryAdjustOpen) {
+        const ledger = state.treasuryContext === "global" ? buildGlobalLedger() : buildCompteLedger(state.treasuryContext);
+        const cats = state.treasuryContext === "global" ? [] : (state.treasuryContext === "epargne" ? Object.keys(getAllSavingsCats()) : Object.keys(getAllAccountCats()));
+        state.treasuryAdjustDraft = { amount: String(ledger.soldeActuel), cat: cats[0] || "default" };
+      }
+      state.treasuryAdjustOpen = !state.treasuryAdjustOpen;
+      update();
+      break;
+    }
+    case "confirm-treasury-adjust": {
+      captureTreasuryAdjustDraft();
+      const ctx = state.treasuryContext;
+      const ledger = ctx === "global" ? buildGlobalLedger() : buildCompteLedger(ctx);
+      const soldeReel = parseFloat(String(state.treasuryAdjustDraft.amount).replace(",", "."));
+      if (isNaN(soldeReel)) return;
+      const diff = Math.round((soldeReel - ledger.soldeActuel) * 100) / 100;
+      if (diff !== 0) {
+        const today = todayISO();
+        if (ctx === "global") {
+          state.oneOff.push({ id: uid(), type: diff > 0 ? "revenu" : "charge", label: "Ajustement solde (réel constaté)", category: diff > 0 ? "Autres revenus" : "Autres charges", amount: Math.abs(diff), date: today, adjustment: true });
+        } else {
+          const cat = ctx === "courses" ? Object.keys(getAllAccountCats())[0] : (state.treasuryAdjustDraft.cat || Object.keys(getAllSavingsCats())[0]);
+          state.epargneMouvements.push({ id: uid(), categorie: cat, type: diff > 0 ? "versement" : "retrait", amount: Math.abs(diff), date: today, adjustment: true });
+        }
+        persist();
+      }
+      state.treasuryAdjustOpen = false;
+      update();
+      break;
+    }
+    case "open-epargne-form": {
+      const ctx = btn.getAttribute("data-ctx") || "epargne";
+      state.epargneFormOpen = true;
+      state.epargneFreq = "ponctuelle";
+      state.epargneFormContext = ctx;
+      const cats = ctx === "epargne" ? Object.keys(getAllSavingsCats()) : Object.keys(getAllAccountCats());
+      state.epargneDraft = { categorie: cats[0] || "default", type: "versement", amount: "", date: todayISO(), day: "1", startMonth: state.cursor, endMonth: "" };
+      update();
+      break;
+    }
+    case "close-epargne-form": state.epargneFormOpen = false; update(); break;
+    case "open-epargne-panel":
+      state.epargnePanelContext = btn.getAttribute("data-ctx") || "epargne";
+      state.epargnePanelOpen = true;
+      update();
+      break;
+    case "close-epargne-panel": state.epargnePanelOpen = false; update(); break;
+    case "set-epargne-cat": {
+      captureEpargneDraft();
+      state.epargneDraft.categorie = btn.getAttribute("data-cat");
+      render();
+      break;
+    }
+    case "set-epargne-type": {
+      captureEpargneDraft();
+      state.epargneDraft.type = btn.getAttribute("data-type");
+      render();
+      break;
+    }
+    case "set-epargne-freq": {
+      captureEpargneDraft();
+      state.epargneFreq = btn.getAttribute("data-freq");
+      render();
+      break;
+    }
+    case "add-epargne": {
+      captureEpargneDraft();
+      const amt = parseFloat(String(state.epargneDraft.amount).replace(",", "."));
+      if (!amt || amt <= 0) return;
+      if (state.epargneFreq === "ponctuelle") {
+        state.epargneMouvements.push({
+          id: uid(), categorie: state.epargneDraft.categorie, type: state.epargneDraft.type,
+          amount: Math.round(amt * 100) / 100, date: state.epargneDraft.date || todayISO(),
+        });
+      } else {
+        state.epargneRecurrents.push({
+          id: uid(), categorie: state.epargneDraft.categorie, type: state.epargneDraft.type,
+          amount: Math.round(amt * 100) / 100, day: Math.max(1, Math.min(31, parseInt(state.epargneDraft.day, 10) || 1)),
+          startMonth: state.epargneDraft.startMonth || state.cursor, endMonth: state.epargneDraft.endMonth || null,
+        });
+      }
+      persist();
+      state.epargneFormOpen = false;
+      update();
+      break;
+    }
+    case "remove-epargne": {
+      const id = btn.getAttribute("data-id");
+      state.epargneMouvements = state.epargneMouvements.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "remove-epargne-recurrent": {
+      const id = btn.getAttribute("data-id");
+      state.epargneRecurrents = state.epargneRecurrents.filter((x) => x.id !== id);
+      persist();
+      update();
+      break;
+    }
+    case "export-data": exportData(); break;
+    case "trigger-import": {
+      const input = document.getElementById("import-file");
+      if (input) input.click();
+      break;
+    }
+    case "open-manage-categories": state.manageCategoriesOpen = true; update(); break;
+    case "close-manage-categories": state.manageCategoriesOpen = false; update(); break;
+    case "add-custom-cat": {
+      const catType = btn.getAttribute("data-type");
+      const nameInput = document.getElementById(`f-new-${catType}-name`);
+      const emojiInput = document.getElementById(`f-new-${catType}-emoji`);
+      const name = nameInput ? nameInput.value.trim() : "";
+      const emoji = emojiInput ? emojiInput.value.trim() : "";
+      if (!name) return;
+      const target = catType === "savings" ? state.customCategories.savings : state.customCategories.accounts;
+      target[name] = { emoji };
+      persist();
+      if (nameInput) nameInput.value = "";
+      if (emojiInput) emojiInput.value = "";
+      update();
+      break;
+    }
+    case "remove-custom-cat": {
+      const catType = btn.getAttribute("data-type");
+      const cat = btn.getAttribute("data-cat");
+      const target = catType === "savings" ? state.customCategories.savings : state.customCategories.accounts;
+      delete target[cat];
+      persist();
+      update();
+      break;
+    }
+  }
+  if (action === "close-form" || action === "close-recurring" || action === "close-epargne-form" || action === "close-epargne-panel") return;
+  if (btn.classList.contains("sheet-overlay")) update();
+});
+
+document.addEventListener("change", (e) => {
+  if (e.target && e.target.classList && e.target.classList.contains("treasury-exclude-checkbox")) {
+    const tid = e.target.getAttribute("data-tid");
+    const month = e.target.getAttribute("data-month");
+    const kind = e.target.getAttribute("data-kind");
+    const arr = kind === "global" ? state.recurring : state.epargneRecurrents;
+    const r = arr.find((x) => x.id === tid);
+    if (r) {
+      if (!r.excluded) r.excluded = {};
+      if (e.target.checked) delete r.excluded[month];
+      else r.excluded[month] = true;
+      persist();
+      update();
+    }
+    return;
+  }
+  if (e.target && e.target.id === "import-file") {
+    const file = e.target.files && e.target.files[0];
+    if (file) handleImportFile(file);
+    e.target.value = "";
+    return;
+  }
+  if (e.target && e.target.classList && e.target.classList.contains("epargne-recurring-day-input")) {
+    const id = e.target.getAttribute("data-id");
+    const r = state.epargneRecurrents.find((x) => x.id === id);
+    const day = Math.max(1, Math.min(31, parseInt(e.target.value, 10) || 1));
+    if (r) r.day = day;
+    persist();
+    update();
+    return;
+  }
+  if (e.target && e.target.classList && e.target.classList.contains("recurring-day-input")) {
+    const id = e.target.getAttribute("data-id");
+    const r = state.recurring.find((x) => x.id === id);
+    const day = Math.max(1, Math.min(31, parseInt(e.target.value, 10) || 1));
+    if (r) r.day = day;
+    persist();
+    update();
+    return;
+  }
+  if (e.target && e.target.classList && e.target.classList.contains("recurring-start-input")) {
+    const id = e.target.getAttribute("data-id");
+    const r = state.recurring.find((x) => x.id === id);
+    if (r && e.target.value) r.startMonth = e.target.value;
+    persist();
+    update();
+    return;
+  }
+  if (e.target && e.target.classList && e.target.classList.contains("recurring-end-input")) {
+    const id = e.target.getAttribute("data-id");
+    const r = state.recurring.find((x) => x.id === id);
+    if (r) r.endMonth = e.target.value || null;
+    persist();
+    update();
+  }
+});
+
+loadData();
+render();
+if (state.syncCode) startSync(state.syncCode);
+</script>
+
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
